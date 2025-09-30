@@ -1,0 +1,236 @@
+/* App */
+"app.title" = "快速重复文件查找器";
+"app.subtitle" = "在 Mac 上查找并清理重复文件";
+
+/* Sidebar */
+"sidebar.locations" = "扫描位置";
+"sidebar.scanning.scope" = "本次扫描";
+"sidebar.select.folder" = "添加要扫描的文件夹";
+"sidebar.drop.hint" = "可选择一个或多个目录";
+"sidebar.scan.need.folder" = "添加文件夹后即可扫描";
+"sidebar.start.scan" = "开始扫描";
+"sidebar.stop.scan" = "停止";
+"sidebar.settings" = "设置";
+"sidebar.settings.help" = "设置（⌘,）";
+"sidebar.add.more.folders" = "继续添加";
+"sidebar.clear.all" = "清空";
+"sidebar.clear.all.help" = "清除已选扫描目录";
+"sidebar.remove.folder" = "移除此目录";
+
+/* Welcome */
+"welcome.tip.1" = "在左侧添加本地或网络文件夹";
+"welcome.tip.2" = "极速扫描 + 缓存复用，二次扫描更快";
+"welcome.tip.3" = "「需复核」组可先精确比对，再决定是否删除";
+
+/* Folder info */
+"folder.info.title" = "准备扫描";
+"folder.info.subtitle" = "将对以下文件夹查找重复项";
+"folder.info.loading" = "准备中…";
+"folder.info.total" = "汇总";
+"folder.info.selected.folders" = "个已选文件夹";
+"folder.info.ready.scan" = "确认无误后点击「开始扫描」";
+"folder.info.hint" = "可先继续添加目录，或按 ⌘, 打开设置";
+
+/* Scan phases */
+"scan.phase.initializing" = "初始化";
+"scan.phase.scanning" = "扫描文件";
+"scan.phase.processing" = "查找重复";
+"scan.phase.finalizing" = "整理结果";
+"scan.phase.progress" = "正在扫描 %d 个文件夹";
+"scan.phase.sorting.detail" = "已收集 %d 个文件";
+
+/* Scan progress */
+"scan.time.remaining" = "预计剩余：%@";
+"scan.initializing" = "正在初始化…";
+"scan.files" = "正在扫描文件…";
+"scan.files.found" = "已找到 %d 个文件…";
+"scan.files.network" = "正在列出网络卷…";
+"scan.files.network.detail" = "%@ · %d 项 · %d 个文件";
+"scan.files.visited" = "%d 项 · %d 个文件";
+"scan.cache.processing" = "正在处理缓存…";
+"scan.cache.hit" = "与上次扫描一致 — 复用结果";
+"scan.cache.hit.detail" = "文件列表未变，已跳过重新哈希";
+"scan.cache.reuse.detail" = "候选均来自磁盘缓存";
+"scan.finalizing" = "正在整理结果…";
+"scan.hashing" = "正在计算哈希…";
+"scan.hashing.network" = "正在哈希网络文件…";
+"scan.complete" = "扫描完成";
+"scan.cancelled" = "扫描已取消";
+
+/* Errors */
+"error.title" = "错误";
+
+/* Results */
+"results.no.duplicates" = "未发现重复";
+"results.all.unique" = "所选文件夹中没有重复组";
+"results.expand.all" = "全部展开";
+"results.collapse.all" = "全部收起";
+"results.move.to.trash" = "移至废纸篓";
+"results.delete.permanently" = "永久删除";
+"results.duplicate.files" = "%d 个重复文件";
+"results.duplicate.packages" = "%d 个重复包";
+"results.package.badge" = "整包";
+"results.cleanup" = "清理";
+"results.cleanup.count" = "清理 (%d)";
+"results.cleanup.help" = "清理列表中已勾选的项";
+"results.keep.suggest" = "建议保留";
+"results.recommended.keep" = "建议保留";
+"results.will.delete" = "将删除";
+"results.mark.delete" = "勾选为待删除";
+"results.unmark.delete" = "取消勾选";
+"results.selected.count" = "已选 %d";
+"results.select.hint" = "勾选表示加入清理；空心圆为不删除。可改「建议保留」。";
+"results.select.hint.identity" = "同壳不同名：默认不勾选，请自行勾选确定不要的入口。";
+"results.select.hint.locale" = "语言/地区变体：默认不勾选。请只勾选确定多余的语言包。";
+"results.select.hint.multiproduct" = "多产品同角色：默认不勾选。各产品内同角色文件请分别保留。";
+"results.select.hint.purpose" = "用途可能不同：默认不勾选。请只勾选确认不需要的文件。";
+"results.reveal.finder" = "在 Finder 中显示";
+"results.search.placeholder" = "搜索名称或路径";
+"results.filter.all" = "全部";
+"results.filter.review" = "需复核";
+"results.filter.packages" = "整包";
+"results.metric.groups" = "重复组";
+"results.metric.groups.review" = "%d 组需复核";
+"results.metric.groups.ok" = "可开始清理";
+"results.metric.freeable" = "可释放";
+"results.metric.freeable.hint" = "重复副本占用空间";
+"results.metric.scan" = "扫描项";
+"results.metric.scan.detail" = "耗时 %@";
+"results.group.waste" = "可回收 %@";
+"results.filter.empty.title" = "没有匹配结果";
+"results.filter.empty.search" = "没有符合搜索条件的重复组。";
+"results.filter.empty.all" = "没有重复组。";
+"results.filter.empty.review" = "当前没有需要复核的组。";
+"results.filter.empty.packages" = "没有整包重复组。";
+"results.delete" = "删除";
+
+/* Timing */
+"timing.breakdown" = "耗时拆分";
+"timing.enumerate" = "枚举";
+"timing.prepare" = "准备";
+"timing.hashing" = "哈希";
+"timing.finalize" = "收尾";
+"timing.cache.stats" = "缓存 %d · 新算 %d";
+"timing.path.snapshot" = "快照命中";
+"timing.path.cache" = "哈希缓存";
+"timing.path.full" = "完整扫描";
+
+/* Duration */
+"duration.under_ms" = "<1 毫秒";
+"duration.ms" = "%.0f 毫秒";
+"duration.s" = "%.1f 秒";
+"duration.seconds" = "%d 秒";
+
+/* Delete preview */
+"delete.preview.title" = "删除预览";
+"delete.preview.message" = "将删除 %d 项，释放 %@";
+"delete.preview.group" = "第 %d 组 · %@";
+"delete.network.warning" = "网络文件可能被永久删除（无法使用废纸篓）。";
+"delete.package.identity.warning" = "当前选择包含内容相同但名称/路径表示不同用途的项（套壳、语言包、多产品同角色等）。";
+"delete.file.help" = "立即删除此项";
+
+/* Alerts */
+"alert.confirm.delete" = "确认删除";
+"alert.delete" = "删除";
+"alert.cancel" = "取消";
+"alert.ok" = "好";
+"alert.deletion.complete" = "删除完成";
+"alert.delete.result" = "%d 项删除成功，%d 项失败。";
+"alert.delete.file.confirm" = "确定删除「%@」吗？";
+"alert.delete.package.identity" = "「%@」与同组内容相同，但名称或路径可能表示不同用途。仍要删除吗？";
+
+/* Permission */
+"permission.denied.title" = "需要访问权限";
+"permission.denied.message" = "无法访问 %@。请在侧栏重新选择该文件夹并在系统提示时允许访问，或在系统设置中授权。";
+"permission.open.settings" = "打开系统设置";
+"permission.location.desktop" = "桌面";
+"permission.location.documents" = "文稿";
+"permission.location.downloads" = "下载";
+"permission.location.pictures" = "图片";
+"permission.location.movies" = "影片";
+"permission.location.music" = "音乐";
+"permission.location.folder" = "该文件夹";
+
+/* Settings */
+"settings.title" = "设置";
+"settings.subtitle" = "扫描与清理偏好";
+"settings.done" = "完成";
+"settings.language" = "语言";
+"settings.language.system.note" = "跟随「系统设置 → 语言与地区」。更改系统语言后请重新打开本应用。";
+"settings.language.current" = "当前：%@";
+"settings.scan.settings" = "扫描";
+"settings.skip.hidden" = "跳过隐藏文件";
+"settings.skip.hidden.help" = "忽略名称以点开头的项";
+"settings.skip.system" = "跳过系统文件";
+"settings.skip.system.help" = "跳过系统目录与常见缓存";
+"settings.file.filtering" = "文件过滤";
+"settings.file.filtering.desc" = "排除的扩展名不参与查重。快速预设会替换当前列表。";
+"settings.confirm.before.delete" = "清理前确认";
+"settings.confirm.before.delete.help" = "清理前显示预览";
+"settings.move.to.trash" = "移至废纸篓";
+"settings.move.to.trash.help" = "本地文件进废纸篓；网络卷可能永久删除";
+"settings.auto.delete" = "扫描后自动清理";
+"settings.auto.delete.help" = "扫描结束后自动清理已勾选项（请谨慎）";
+"settings.min.size" = "最小文件大小";
+"settings.min.size.help" = "小于此大小的文件将被忽略";
+"settings.max.size" = "最大文件大小";
+"settings.max.size.help" = "大于此大小的文件将被忽略";
+"settings.range" = "范围：%d – %d %@";
+"settings.range.gb" = "范围：%.1f – %.1f GB";
+"settings.value" = "数值";
+"settings.quick.presets" = "快速预设";
+"settings.image.files" = "图片";
+"settings.document.files" = "文档";
+"settings.media.files" = "媒体";
+"settings.excluded.extensions" = "排除的扩展名";
+"settings.no.excluded.extensions" = "未排除任何扩展名";
+"settings.enter.extension" = "例如 tmp";
+"settings.add" = "添加";
+"settings.deletion.settings" = "清理";
+"settings.reset.defaults" = "恢复默认";
+"settings.reset.confirm.title" = "恢复默认设置？";
+"settings.reset.confirm" = "恢复";
+"settings.reset.confirm.message" = "将扫描与清理选项恢复为默认值。";
+"settings.cache.title" = "缓存";
+"settings.cache.location" = "位置";
+"settings.cache.entries" = "条目";
+"settings.cache.size" = "估算大小";
+"settings.cache.oldest" = "最早条目";
+"settings.cache.clear" = "清除缓存";
+"settings.cache.clear.confirm.title" = "清除缓存？";
+"settings.cache.clear.confirm.clear" = "清除";
+"settings.cache.clear.confirm.message" = "将删除 %d 条哈希缓存，下次扫描可能变慢。";
+"settings.about" = "关于";
+"settings.version" = "版本";
+"settings.build.date" = "构建日期";
+"settings.system.info" = "系统";
+
+/* Review */
+"review.suggested" = "需复核";
+"review.verified" = "已确认";
+"review.suggested.hint" = "由极速采样匹配。删除前建议「精确比对」。";
+"review.verify.group" = "精确比对";
+"review.verify.group.help" = "对本组做全文精确比对";
+"review.verify.all" = "精确比对需复核";
+"review.verify.all.help" = "对所有「需复核」组做全文精确比对";
+"review.verify.all.count" = "精确比对需复核 (%d)";
+"review.verify.all.short" = "比对 (%d)";
+"verify.progress" = "精确比对 %d / %d…";
+"review.delete.warn.title" = "仍有需复核的组";
+"review.delete.warn.message" = "有 %d 组仍为「需复核」（仅极速采样）。建议先精确比对，或确认风险后再删除。";
+"review.delete.anyway" = "仍要删除";
+"review.package.names.differ" = "名称不同";
+"review.package.names.hint" = "包内容相同但名称不同，可能是启动器或套壳。";
+"review.package.shell.hint" = "同一程序壳（Bundle ID 相同）使用了不同名称，常见于多入口套壳；内容相同不代表可以随意删入口。";
+"review.purpose.locale" = "地区变体";
+"review.purpose.locale.hint" = "内容相同，但语言/地区不同：可能在文件名或路径中（如 fr_CA、locale/en_US、*.lproj）。多为多语言资源。";
+"review.purpose.multiproduct" = "多产品同角色";
+"review.purpose.multiproduct.hint" = "内容与包内相对路径相同，但分属不同应用/包。每一份都是该产品所需。";
+"review.purpose.names" = "用途可能不同";
+"review.purpose.names.hint" = "内容相同但文件名明显不同，可能是配置、渠道等用途变体。";
+"review.package.identity.warn.title" = "名称/用途风险";
+"review.package.identity.warn.message" = "有 %d 组内容相同，但名称或路径表示不同用途。默认未勾选；仅清理你确定不需要的项。";
+
+/* Language labels */
+"language.english" = "英语";
+"language.chinese" = "中文";

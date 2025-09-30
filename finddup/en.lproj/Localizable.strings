@@ -1,0 +1,236 @@
+/* App */
+"app.title" = "Fast Duplicate Finder";
+"app.subtitle" = "Find and remove duplicate files on Mac";
+
+/* Sidebar */
+"sidebar.locations" = "Locations";
+"sidebar.scanning.scope" = "This scan";
+"sidebar.select.folder" = "Add folders to scan";
+"sidebar.drop.hint" = "Choose one or more folders";
+"sidebar.scan.need.folder" = "Add a folder to enable scan";
+"sidebar.start.scan" = "Start Scan";
+"sidebar.stop.scan" = "Stop";
+"sidebar.settings" = "Settings";
+"sidebar.settings.help" = "Settings (⌘,)";
+"sidebar.add.more.folders" = "Add More";
+"sidebar.clear.all" = "Clear";
+"sidebar.clear.all.help" = "Remove all scan locations";
+"sidebar.remove.folder" = "Remove this folder";
+
+/* Welcome */
+"welcome.tip.1" = "Add local or network folders from the sidebar";
+"welcome.tip.2" = "Turbo scan finds candidates quickly with cache reuse";
+"welcome.tip.3" = "Run Precise compare on Needs review groups before deleting";
+
+/* Folder info (ready state) */
+"folder.info.title" = "Ready to scan";
+"folder.info.subtitle" = "These folders will be scanned for duplicates";
+"folder.info.loading" = "Preparing…";
+"folder.info.total" = "Summary";
+"folder.info.selected.folders" = "folders selected";
+"folder.info.ready.scan" = "Click Start Scan when ready";
+"folder.info.hint" = "You can add more locations or adjust Settings (⌘,) first";
+
+/* Scan phases */
+"scan.phase.initializing" = "Initializing";
+"scan.phase.scanning" = "Scanning files";
+"scan.phase.processing" = "Finding duplicates";
+"scan.phase.finalizing" = "Finalizing";
+"scan.phase.progress" = "Scanning %d folders";
+"scan.phase.sorting.detail" = "Collected %d files";
+
+/* Scan progress */
+"scan.time.remaining" = "Time remaining: %@";
+"scan.initializing" = "Initializing…";
+"scan.files" = "Scanning files…";
+"scan.files.found" = "Found %d files…";
+"scan.files.network" = "Listing network volume…";
+"scan.files.network.detail" = "%@ · %d items · %d files";
+"scan.files.visited" = "%d items · %d files";
+"scan.cache.processing" = "Processing cache…";
+"scan.cache.hit" = "Unchanged since last scan — reusing results";
+"scan.cache.hit.detail" = "Skipped re-hashing (file list signature match)";
+"scan.cache.reuse.detail" = "All candidates served from disk cache";
+"scan.finalizing" = "Finalizing results…";
+"scan.hashing" = "Computing hashes…";
+"scan.hashing.network" = "Hashing network files…";
+"scan.complete" = "Scan complete";
+"scan.cancelled" = "Scan cancelled";
+
+/* Errors */
+"error.title" = "Error";
+
+/* Results */
+"results.no.duplicates" = "No duplicates found";
+"results.all.unique" = "No duplicate groups in the selected folders";
+"results.expand.all" = "Expand all";
+"results.collapse.all" = "Collapse all";
+"results.move.to.trash" = "Move to Trash";
+"results.delete.permanently" = "Delete Permanently";
+"results.duplicate.files" = "%d duplicate files";
+"results.duplicate.packages" = "%d duplicate packages";
+"results.package.badge" = "Package";
+"results.cleanup" = "Clean Up";
+"results.cleanup.count" = "Clean Up (%d)";
+"results.cleanup.help" = "Remove items you checked in the list";
+"results.keep.suggest" = "Suggested keep";
+"results.recommended.keep" = "Suggested keep";
+"results.will.delete" = "Will delete";
+"results.mark.delete" = "Mark for delete";
+"results.unmark.delete" = "Unmark";
+"results.selected.count" = "%d selected";
+"results.select.hint" = "Check items to clean up. Empty circle = keep. You can change the suggestion.";
+"results.select.hint.identity" = "Same shell, different names: nothing checked by default — select only entries to remove.";
+"results.select.hint.locale" = "Locale variants: nothing checked by default. Only mark packs you do not need.";
+"results.select.hint.multiproduct" = "Same role in multiple products: nothing checked by default. Keep each product’s copy.";
+"results.select.hint.purpose" = "Different roles: nothing checked by default. Only mark files you are sure are disposable.";
+"results.reveal.finder" = "Reveal in Finder";
+"results.search.placeholder" = "Search name or path";
+"results.filter.all" = "All";
+"results.filter.review" = "Needs review";
+"results.filter.packages" = "Packages";
+"results.metric.groups" = "Duplicate groups";
+"results.metric.groups.review" = "%d need review";
+"results.metric.groups.ok" = "Ready to clean";
+"results.metric.freeable" = "Can free";
+"results.metric.freeable.hint" = "Space in duplicate copies";
+"results.metric.scan" = "Items scanned";
+"results.metric.scan.detail" = "Completed in %@";
+"results.group.waste" = "%@ reclaimable";
+"results.filter.empty.title" = "Nothing here";
+"results.filter.empty.search" = "No groups match your search.";
+"results.filter.empty.all" = "No duplicate groups.";
+"results.filter.empty.review" = "No groups currently need review.";
+"results.filter.empty.packages" = "No package duplicate groups.";
+"results.delete" = "Delete";
+
+/* Timing */
+"timing.breakdown" = "Time breakdown";
+"timing.enumerate" = "Enumerate";
+"timing.prepare" = "Prepare";
+"timing.hashing" = "Hash";
+"timing.finalize" = "Finalize";
+"timing.cache.stats" = "cache %d · hashed %d";
+"timing.path.snapshot" = "Snapshot hit";
+"timing.path.cache" = "Hash cache";
+"timing.path.full" = "Full scan";
+
+/* Duration */
+"duration.under_ms" = "<1 ms";
+"duration.ms" = "%.0f ms";
+"duration.s" = "%.1f s";
+"duration.seconds" = "%ds";
+
+/* Delete preview */
+"delete.preview.title" = "Delete Preview";
+"delete.preview.message" = "Will delete %d items, freeing %@";
+"delete.preview.group" = "Group %d · %@";
+"delete.network.warning" = "Network files may be permanently deleted (cannot use Trash).";
+"delete.package.identity.warning" = "Selection includes same-content items with different purposeful names (wrappers, locale packs, multi-product roles).";
+"delete.file.help" = "Delete this item now";
+
+/* Alerts */
+"alert.confirm.delete" = "Confirm Delete";
+"alert.delete" = "Delete";
+"alert.cancel" = "Cancel";
+"alert.ok" = "OK";
+"alert.deletion.complete" = "Deletion Complete";
+"alert.delete.result" = "%d deleted successfully, %d failed.";
+"alert.delete.file.confirm" = "Delete “%@”?";
+"alert.delete.package.identity" = "“%@” matches others by content but the name or path suggests a different purpose. Delete anyway?";
+
+/* Permission */
+"permission.denied.title" = "Permission Required";
+"permission.denied.message" = "Could not access %@. Use the sidebar to re-select the folder and grant access when prompted, or allow access in System Settings.";
+"permission.open.settings" = "Open System Settings";
+"permission.location.desktop" = "Desktop";
+"permission.location.documents" = "Documents";
+"permission.location.downloads" = "Downloads";
+"permission.location.pictures" = "Pictures";
+"permission.location.movies" = "Movies";
+"permission.location.music" = "Music";
+"permission.location.folder" = "this folder";
+
+/* Settings */
+"settings.title" = "Settings";
+"settings.subtitle" = "Scan and cleanup preferences";
+"settings.done" = "Done";
+"settings.language" = "Language";
+"settings.language.system.note" = "Follows System Settings → Language & Region. Relaunch the app after changing language.";
+"settings.language.current" = "Current: %@";
+"settings.scan.settings" = "Scan";
+"settings.skip.hidden" = "Skip hidden files";
+"settings.skip.hidden.help" = "Ignore names that start with a dot";
+"settings.skip.system" = "Skip system files";
+"settings.skip.system.help" = "Skip system directories and common caches";
+"settings.file.filtering" = "File filtering";
+"settings.file.filtering.desc" = "Excluded extensions are not scanned. Quick presets replace the list.";
+"settings.confirm.before.delete" = "Confirm before cleanup";
+"settings.confirm.before.delete.help" = "Show a preview before cleaning";
+"settings.move.to.trash" = "Move to Trash";
+"settings.move.to.trash.help" = "Local files go to Trash; network volumes may delete permanently";
+"settings.auto.delete" = "Auto-clean after scan";
+"settings.auto.delete.help" = "Automatically clean checked items after a scan (use with care)";
+"settings.min.size" = "Minimum file size";
+"settings.min.size.help" = "Ignore files smaller than this";
+"settings.max.size" = "Maximum file size";
+"settings.max.size.help" = "Ignore files larger than this";
+"settings.range" = "Range: %d – %d %@";
+"settings.range.gb" = "Range: %.1f – %.1f GB";
+"settings.value" = "Value";
+"settings.quick.presets" = "Quick presets";
+"settings.image.files" = "Images";
+"settings.document.files" = "Documents";
+"settings.media.files" = "Media";
+"settings.excluded.extensions" = "Excluded extensions";
+"settings.no.excluded.extensions" = "None excluded";
+"settings.enter.extension" = "e.g. tmp";
+"settings.add" = "Add";
+"settings.deletion.settings" = "Cleanup";
+"settings.reset.defaults" = "Reset defaults";
+"settings.reset.confirm.title" = "Reset defaults?";
+"settings.reset.confirm" = "Reset";
+"settings.reset.confirm.message" = "Restore default scan and cleanup options.";
+"settings.cache.title" = "Cache";
+"settings.cache.location" = "Location";
+"settings.cache.entries" = "Entries";
+"settings.cache.size" = "Estimated size";
+"settings.cache.oldest" = "Oldest entry";
+"settings.cache.clear" = "Clear cache";
+"settings.cache.clear.confirm.title" = "Clear cache?";
+"settings.cache.clear.confirm.clear" = "Clear";
+"settings.cache.clear.confirm.message" = "Remove %d cached hash entries. Next scan may be slower.";
+"settings.about" = "About";
+"settings.version" = "Version";
+"settings.build.date" = "Build date";
+"settings.system.info" = "System";
+
+/* Review / precise compare */
+"review.suggested" = "Needs review";
+"review.verified" = "Confirmed";
+"review.suggested.hint" = "Matched by fast sampling. Run Precise compare before deleting.";
+"review.verify.group" = "Precise compare";
+"review.verify.group.help" = "Full-file compare on this group";
+"review.verify.all" = "Compare needs review";
+"review.verify.all.help" = "Full-file compare on every Needs review group";
+"review.verify.all.count" = "Compare needs review (%d)";
+"review.verify.all.short" = "Compare (%d)";
+"verify.progress" = "Precise compare %d / %d…";
+"review.delete.warn.title" = "Groups still need review";
+"review.delete.warn.message" = "%d group(s) are still Needs review (fast sampling only). Compare first, or delete only if you accept the risk.";
+"review.delete.anyway" = "Delete anyway";
+"review.package.names.differ" = "Different names";
+"review.package.names.hint" = "Same package contents, different names. May be launchers or wrappers.";
+"review.package.shell.hint" = "Same app shell (identical bundle id) under different names. Multi-launcher wrappers — content match does not mean safe to delete entries.";
+"review.purpose.locale" = "Locale variants";
+"review.purpose.locale.hint" = "Same contents, different language/region in the name or path (e.g. fr_CA, locale/en_US, *.lproj). Often multi-locale resources.";
+"review.purpose.multiproduct" = "Same role, multi-product";
+"review.purpose.multiproduct.hint" = "Same contents and relative path under different products (e.g. CodeResources in each package). Each copy belongs to that product.";
+"review.purpose.names" = "Likely different roles";
+"review.purpose.names.hint" = "Same contents but clearly different names. May be intentional role or config variants.";
+"review.package.identity.warn.title" = "Name / purpose risk";
+"review.package.identity.warn.message" = "%d group(s) share contents but names or paths suggest different purposes. Nothing is checked by default — only clean what you are sure is disposable.";
+
+/* Language labels */
+"language.english" = "English";
+"language.chinese" = "Chinese";

@@ -1,0 +1,47 @@
+# Build outputs
+build/
+dist/
+DerivedData/
+*.o
+*.swp
+
+# macOS
+.DS_Store
+**/.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+*.xcuserdata/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Local-only agent notes (never publish)
+AGENTS.md
+
+# Local dumps / debug / stale notes (never publish)
+1010
+1011
+1013
+1014
+1014superstock
+*_debug.log
+finddup_debug.log
+docs/
+scripts/
+*.patch
+
+# Raw captures (commit screenshot/* intentionally)
+Screenshot*.png
+*.png.nosync
