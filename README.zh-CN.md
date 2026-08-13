@@ -5,7 +5,7 @@
 原生 **macOS** 应用：在本地盘与网络卷（NAS）上查找并清理**重复文件**。默认极速扫描，清理前有安全与用途风险提示。
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.3-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-1.0.4-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-macOS%2013%2B-blue" alt="platform" />
   <img src="https://img.shields.io/badge/architecture-Apple%20Silicon-green" alt="arch" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license" />
@@ -74,6 +74,11 @@ open finddup.xcodeproj
 设置：**⌘,** 或齿轮。
 
 ## 更新日志
+
+### 1.0.4
+
+- **扫描缓存** — 按扫描根目录合并写入，扫本机不再冲掉 NAS（`/Volumes/…`）哈希；长网络哈希过程中渐进落盘
+- **NAS 进度** — 显示 `hits · new · conc`，仅新增文件需哈希时缓存命中一目了然
 
 ### 1.0.3
 
