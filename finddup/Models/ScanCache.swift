@@ -341,10 +341,86 @@ class ScanCacheManager {
     
     /// - Parameter syncDisk: when false, update memory immediately and encode/write on a utility queue
     ///   so large NAS scans are not blocked for tens of seconds on a 10MB+ plist.
+    ///
+    /// **Important:** Prefer `mergeAndSave` after a scan. Replacing the entire hot cache with a
+    /// working copy loaded at scan start can **drop hashes from another volume** if two scans
+    /// overlap, or if a home scan finishes after a NAS scan and overwrites with a stale base.
     func saveCache(_ cache: ScanCache, syncDisk: Bool = true) {
         hotLock.lock()
         hotCache = cache
         hotLock.unlock()
+        writeCache(cache, syncDisk: syncDisk)
+    }
+    
+    /// Merge this scan's cache working set into the global hot cache (and disk).
+    /// - Upserts all keys from `working`
+    /// - Removes only paths under `scanRoots` that are absent from `currentFiles`
+    /// - Leaves entries for other roots untouched (e.g. keep `/Volumes/…` when scanning `~/`)
+    func mergeAndSave(
+        working: ScanCache,
+        scanRoots: [URL],
+        currentFiles: [FileInfo],
+        syncDisk: Bool = false
+    ) {
+        let roots = scanRoots.map { $0.path.standardizedPath }
+        let current = Set(currentFiles.map(\.pathKey))
+        
+        hotLock.lock()
+        var base: ScanCache
+        if let hot = hotCache {
+            base = hot
+        } else {
+            hotLock.unlock()
+            base = loadCache()
+            hotLock.lock()
+            base = hotCache ?? base
+        }
+        
+        for (key, value) in working.cachedFiles {
+            base.cachedFiles[key] = value
+        }
+        
+        if !roots.isEmpty {
+            for path in Array(base.cachedFiles.keys) {
+                let underRoot = roots.contains { root in
+                    path == root || path.hasPrefix(root + "/")
+                }
+                if underRoot && !current.contains(path) {
+                    base.cachedFiles.removeValue(forKey: path)
+                }
+            }
+        }
+        
+        base.lastScanDate = Date()
+        hotCache = base
+        let toWrite = base
+        hotLock.unlock()
+        
+        writeCache(toWrite, syncDisk: syncDisk)
+    }
+    
+    /// Upsert hashes mid-scan without running obsolete cleanup (safe progressive flush).
+    func upsertEntries(_ entries: [String: CachedFileInfo], syncDisk: Bool = false) {
+        guard !entries.isEmpty else { return }
+        hotLock.lock()
+        var base = hotCache ?? ScanCache()
+        if hotCache == nil {
+            hotLock.unlock()
+            base = loadCache()
+            hotLock.lock()
+            base = hotCache ?? base
+        }
+        for (key, value) in entries {
+            base.cachedFiles[key] = value
+        }
+        base.lastScanDate = Date()
+        hotCache = base
+        let toWrite = base
+        hotLock.unlock()
+        writeCache(toWrite, syncDisk: syncDisk)
+    }
+    
+    private func writeCache(_ cache: ScanCache, syncDisk: Bool) {
         if syncDisk {
             persistCacheToDisk(cache)
             notifyDidChange()
@@ -360,7 +436,6 @@ class ScanCacheManager {
                     )
                 }
             }
-            // UI can refresh from hot cache immediately (disk write still in flight).
             notifyDidChange()
         }
     }

@@ -224,9 +224,10 @@ actor ScanPipeline {
                 stats.processedFiles = singletonCount + doneCandidates
                 let frac = Double(doneCandidates) / Double(totalCandidates)
                 let msg = networkScan ? "scan.hashing.network" : "scan.hashing"
-                let detail = networkScan
-                    ? "\(doneCandidates)/\(candidates.count) · NAS sequential · conc \(concurrency)"
-                    : "\(doneCandidates)/\(candidates.count) · hits \(stats.cachedFiles) · new \(stats.newFiles)"
+                // Always show hits/new so a partial library add does not look like “from scratch”.
+                let detail =
+                    "\(doneCandidates)/\(candidates.count) · hits \(stats.cachedFiles) · new \(stats.newFiles)"
+                    + (networkScan ? " · conc \(concurrency)" : "")
                 await progress(.init(
                     phase: "scan.phase.processing",
                     message: msg,
@@ -237,10 +238,14 @@ actor ScanPipeline {
                 ))
             }
             
+            // Surface cache reuse immediately (e.g. 40k hits → bar already high before any open).
+            await reportHashProgress(force: true)
+            
             if networkScan {
                 // NAS: single-pass turboFinal only (no partial second open), path-ordered chunks
                 let chunkSize = max(concurrency * 4, 8)
                 var i = 0
+                var sinceFlush = 0
                 while i < needHashAll.count {
                     if cancelled() { break }
                     let end = min(i + chunkSize, needHashAll.count)
@@ -260,8 +265,15 @@ actor ScanPipeline {
                             hash: hash
                         )
                         hashedCount += 1
+                        sinceFlush += 1
                     }
                     await reportHashProgress()
+                    // Progressive merge so a long NAS hash is not lost if a later home scan
+                    // finishes first or the app quits mid-run.
+                    if sinceFlush >= 2000 {
+                        sinceFlush = 0
+                        ScanCacheManager.shared.upsertEntries(cache.cachedFiles, syncDisk: false)
+                    }
                 }
             } else {
                 let small = needHashAll.filter { $0.size <= ContentHasher.smallFileThreshold }
@@ -339,8 +351,12 @@ actor ScanPipeline {
         // short-circuit with wrong/incomplete results.
         if cancelled() {
             if cacheDirty {
-                cache.lastScanDate = Date()
-                ScanCacheManager.shared.saveCache(cache)
+                ScanCacheManager.shared.mergeAndSave(
+                    working: cache,
+                    scanRoots: scanRoots,
+                    currentFiles: unique,
+                    syncDisk: true
+                )
             }
             timing.total = Date().timeIntervalSince(started)
             return ([], stats, timing)
@@ -474,11 +490,16 @@ actor ScanPipeline {
         }
         
         if cacheDirty {
+            // Merge into global cache (do not replace): preserves other roots' hashes
+            // when this scan only covered one volume (e.g. NAS then home).
             cache.cleanObsoleteEntries(currentFiles: unique, scanPaths: scanRoots)
             cache.lastScanDate = Date()
-            // Memory hot-cache updates immediately; disk write is async so UI is not
-            // blocked on encoding a 10MB+ plist after a large NAS scan.
-            ScanCacheManager.shared.saveCache(cache, syncDisk: false)
+            ScanCacheManager.shared.mergeAndSave(
+                working: cache,
+                scanRoots: scanRoots,
+                currentFiles: unique,
+                syncDisk: false
+            )
         }
         
         // Snapshot: hot path for next identical scan; disk write also async.
