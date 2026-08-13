@@ -93,7 +93,8 @@ final class DuplicateFinder: ObservableObject {
     
     func findDuplicates(in folders: [URL], completion: @escaping () -> Void) {
         currentScanTask?.cancel()
-        Task { await pipeline.cancel() }
+        // Nonisolated — must not wait for the pipeline actor (previous large scan may hold it).
+        pipeline.cancel()
         
         let settings = settingsSnapshot
         
@@ -111,12 +112,10 @@ final class DuplicateFinder: ObservableObject {
             self.lastTiming = ScanTimingBreakdown()
             self.totalScanDuration = 0
             
-            await self.pipeline.reset()
-            
             // Wall clock for the whole run (must equal enumerate + pipeline phases).
             let scanWallStart = Date()
             
-            // 1) Enumerate (off main actor) — live progress while walking (critical for NAS)
+            // 1) Enumerate immediately — do not await pipeline first (that froze “Initializing…”).
             self.currentPhase = "scan.phase.scanning".localized
             self.scanProgress = "scan.files".localized
             self.scanProgressPercent = 0.05
@@ -194,7 +193,7 @@ final class DuplicateFinder: ObservableObject {
     
     func cancelScan() {
         currentScanTask?.cancel()
-        Task { await pipeline.cancel() }
+        pipeline.cancel()
         scanProgress = "scan.cancelled".localized
         scanProgressPercent = 0
         errorMessage = nil

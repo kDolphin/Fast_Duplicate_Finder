@@ -1,26 +1,37 @@
 import Foundation
 
+/// Process-wide run id so `cancel()` never waits on the pipeline actor.
+/// (Waiting used to freeze the UI on “Initializing…” while a prior large scan held the actor.)
+final class ScanRunControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+    
+    /// Invalidate any in-flight run. Safe from any thread.
+    @discardableResult
+    func bump() -> UInt64 {
+        lock.lock()
+        generation &+= 1
+        let g = generation
+        lock.unlock()
+        return g
+    }
+    
+    func isActive(_ g: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return g == generation
+    }
+}
+
 /// Off-main-actor duplicate detection pipeline (P0–P2).
 actor ScanPipeline {
     
-    private var cancelled = false
-    /// Bumps on each start/cancel so an in-flight run cannot be "un-cancelled" by reset().
-    private var runGeneration: UInt64 = 0
-    private var activeGeneration: UInt64 = 0
+    /// Shared cancel/generation — `cancel()` is nonisolated and never blocks on this actor.
+    nonisolated let runs = ScanRunControl()
     
-    func cancel() {
-        cancelled = true
-        runGeneration &+= 1
-    }
-    
-    func reset() {
-        // Do not clear `cancelled` here — a new `findDuplicates` owns that.
-        // Clearing mid-flight let a cancelled scan resume and write a bad snapshot.
-        runGeneration &+= 1
-    }
-    
-    private var isCancelled: Bool {
-        cancelled || activeGeneration != runGeneration
+    /// Synchronous cancel — does not hop onto the actor (critical for responsive stop/restart).
+    nonisolated func cancel() {
+        runs.bump()
     }
     
     func findDuplicates(
@@ -29,20 +40,20 @@ actor ScanPipeline {
         mode: ScanMode,
         progress: @Sendable (ScanProgressUpdate) async -> Void
     ) async -> (groups: [DuplicateGroup], stats: ScanStatisticsSnapshot, timing: ScanTimingBreakdown) {
-        runGeneration &+= 1
-        activeGeneration = runGeneration
-        cancelled = false
+        let myGen = runs.bump()
         let started = Date()
         var stats = ScanStatisticsSnapshot()
         var timing = ScanTimingBreakdown()
         let finalHashMode = ContentHasher.finalMode(for: mode)
+        
+        func cancelled() -> Bool { !runs.isActive(myGen) }
         
         let prepareStart = Date()
         let unique = pathDedupe(files)
         stats.totalFiles = unique.count
         stats.totalSize = unique.reduce(0) { $0 + $1.size }
         
-        guard !isCancelled else {
+        guard !cancelled() else {
             timing.total = Date().timeIntervalSince(started)
             return ([], stats, timing)
         }
@@ -58,7 +69,17 @@ actor ScanPipeline {
         
         // Snapshot short-circuit (mode-aware)
         let rootKeys = ScanResultSnapshot.rootKeys(from: scanRoots)
-        let signature = ScanResultSnapshot.listSignature(for: unique)
+        guard let signature = await listSignatureCancellable(unique, isCancelled: cancelled) else {
+            timing.prepare = Date().timeIntervalSince(prepareStart)
+            timing.total = Date().timeIntervalSince(started)
+            return ([], stats, timing)
+        }
+        
+        guard !cancelled() else {
+            timing.prepare = Date().timeIntervalSince(prepareStart)
+            timing.total = Date().timeIntervalSince(started)
+            return ([], stats, timing)
+        }
         
         await progress(.init(
             phase: "scan.phase.processing",
@@ -221,11 +242,11 @@ actor ScanPipeline {
                 let chunkSize = max(concurrency * 4, 8)
                 var i = 0
                 while i < needHashAll.count {
-                    if isCancelled { break }
+                    if cancelled() { break }
                     let end = min(i + chunkSize, needHashAll.count)
                     let slice = Array(needHashAll[i..<end])
                     i = end
-                    let results = await hashFiles(slice, mode: finalHashMode, concurrency: concurrency)
+                    let results = await hashFiles(slice, mode: finalHashMode, concurrency: concurrency, isCancelled: cancelled)
                     for (file, hash) in results {
                         guard let hash, ContentHasher.isFinalHash(hash, for: mode) else {
                             stats.errorFiles += 1
@@ -250,11 +271,11 @@ actor ScanPipeline {
                     let chunkSize = max(concurrency * 4, 16)
                     var i = 0
                     while i < small.count {
-                        if isCancelled { break }
+                        if cancelled() { break }
                         let end = min(i + chunkSize, small.count)
                         let slice = Array(small[i..<end])
                         i = end
-                        let results = await hashFiles(slice, mode: finalHashMode, concurrency: concurrency)
+                        let results = await hashFiles(slice, mode: finalHashMode, concurrency: concurrency, isCancelled: cancelled)
                         for (file, hash) in results {
                             guard let hash, ContentHasher.isFinalHash(hash, for: mode) else {
                                 stats.errorFiles += 1
@@ -274,7 +295,7 @@ actor ScanPipeline {
                 }
                 
                 if !large.isEmpty {
-                    let partials = await hashFiles(large, mode: .partial, concurrency: concurrency)
+                    let partials = await hashFiles(large, mode: .partial, concurrency: concurrency, isCancelled: cancelled)
                     var partialGroups: [String: [FileInfo]] = [:]
                     for (file, hash) in partials {
                         if let hash {
@@ -287,9 +308,9 @@ actor ScanPipeline {
                         ($0.first?.pathKey ?? "") < ($1.first?.pathKey ?? "")
                     }
                     for groupFiles in orderedGroups {
-                        if isCancelled { break }
+                        if cancelled() { break }
                         let ordered = groupFiles.sorted { $0.pathKey < $1.pathKey }
-                        let finals = await hashFiles(ordered, mode: finalHashMode, concurrency: concurrency)
+                        let finals = await hashFiles(ordered, mode: finalHashMode, concurrency: concurrency, isCancelled: cancelled)
                         for (file, hash) in finals {
                             guard let hash, ContentHasher.isFinalHash(hash, for: mode) else {
                                 stats.errorFiles += 1
@@ -316,7 +337,7 @@ actor ScanPipeline {
         // Cancelled mid-hash: keep partial per-file hash cache (resume speed) but never
         // publish incomplete groups or a result snapshot — that made the next scan
         // short-circuit with wrong/incomplete results.
-        if isCancelled {
+        if cancelled() {
             if cacheDirty {
                 cache.lastScanDate = Date()
                 ScanCacheManager.shared.saveCache(cache)
@@ -518,10 +539,68 @@ actor ScanPipeline {
         return max(0, elapsed / fraction - elapsed)
     }
     
+    /// Cancellable list fingerprint — yields periodically so cancel can run and UI can restart.
+    private func listSignatureCancellable(
+        _ files: [FileInfo],
+        isCancelled: () -> Bool
+    ) async -> String? {
+        var xor0: UInt64 = 0
+        var xor1: UInt64 = 0
+        var totalSize: Int64 = 0
+        let chunk = 4096
+        var index = 0
+        while index < files.count {
+            if isCancelled() { return nil }
+            let end = min(index + chunk, files.count)
+            for i in index..<end {
+                let f = files[i]
+                totalSize += f.size
+                let sec = Int64(f.modificationDate.timeIntervalSince1970)
+                var h0 = XXHash64(seed: 0x9E37_79B1_85EB_CA87)
+                var h1 = XXHash64(seed: 0xC2B2_AE3D_27D4_EB4F)
+                if let pathData = f.pathKey.data(using: .utf8) {
+                    h0.update(pathData)
+                    h1.update(pathData)
+                }
+                var sizeBE = f.size.bigEndian
+                var secBE = sec.bigEndian
+                withUnsafeBytes(of: &sizeBE) { raw in
+                    h0.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+                    h1.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+                }
+                withUnsafeBytes(of: &secBE) { raw in
+                    h0.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+                    h1.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+                }
+                xor0 ^= h0.digest()
+                xor1 ^= h1.digest()
+            }
+            index = end
+            await Task.yield()
+        }
+        if isCancelled() { return nil }
+        var outer0 = XXHash64(seed: 0x4F1B_BCDC_BFA5_853D)
+        var outer1 = XXHash64(seed: 0x27D4_EB2F_1656_67C5)
+        var countBE = Int64(files.count).bigEndian
+        var totalBE = totalSize.bigEndian
+        var x0 = xor0.bigEndian
+        var x1 = xor1.bigEndian
+        withUnsafeBytes(of: &countBE) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &totalBE) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x0) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x1) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &countBE) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &totalBE) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x0) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x1) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        return String(format: "ls2:%016llx%016llx", outer0.digest(), outer1.digest())
+    }
+    
     private func hashFiles(
         _ files: [FileInfo],
         mode: ContentHasher.Mode,
-        concurrency: Int
+        concurrency: Int,
+        isCancelled: () -> Bool
     ) async -> [(FileInfo, String?)] {
         var results: [(Int, FileInfo, String?)] = []
         results.reserveCapacity(files.count)
@@ -531,7 +610,7 @@ actor ScanPipeline {
         await withTaskGroup(of: (Int, FileInfo, String?).self) { group in
             func enqueue() {
                 while next < files.count && inFlight < concurrency {
-                    if isCancelled { return }
+                    if isCancelled() { return }
                     let i = next
                     let file = files[i]
                     next += 1
@@ -560,7 +639,7 @@ actor ScanPipeline {
             for await item in group {
                 inFlight -= 1
                 results.append(item)
-                if !isCancelled { enqueue() }
+                if !isCancelled() { enqueue() }
             }
         }
         
