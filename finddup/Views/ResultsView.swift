@@ -46,6 +46,14 @@ struct ResultsView: View {
         duplicateGroups.filter { $0.needsReview && !$0.isVerified }.count
     }
     
+    /// Purpose-risk groups in the current filter that still need “apply keep suggestions”.
+    private var purposeRiskPendingCount: Int {
+        DeleteSelectionPolicy.purposeRiskGroupsNeedingSuggestions(
+            in: filteredGroups,
+            selection: selectedForDelete
+        ).count
+    }
+    
     var totalSize: Int64 {
         duplicateGroups.reduce(0) { $0 + $1.duplicateSize }
     }
@@ -86,9 +94,11 @@ struct ResultsView: View {
                     filter: $filter,
                     searchText: $searchText,
                     reviewCount: reviewCount,
+                    purposeRiskPendingCount: purposeRiskPendingCount,
                     isVerifying: isVerifying,
                     allExpanded: allFilteredExpanded,
                     onToggleAll: toggleAllFiltered,
+                    onApplyKeepSuggestions: applyKeepSuggestionsToFiltered,
                     onDeletePreview: onDeletePreview,
                     onVerifyAllReview: onVerifyAllReview,
                     onOpenSettings: onOpenSettings
@@ -143,7 +153,10 @@ struct ResultsView: View {
                                 selectedForDelete: $selectedForDelete,
                                 onToggle: { toggleGroup(group.id) },
                                 onDeleteFile: onDeleteFile,
-                                onVerifyGroup: { onVerifyGroup(group.id) }
+                                onVerifyGroup: { onVerifyGroup(group.id) },
+                                onApplyKeepSuggestion: group.packageIdentityMismatch
+                                    ? { applyKeepSuggestion(for: group) }
+                                    : nil
                             )
                         }
                     }
@@ -182,6 +195,20 @@ struct ResultsView: View {
             expandedGroups.insert(id)
         }
     }
+    
+    private func applyKeepSuggestion(for group: DuplicateGroup) {
+        DeleteSelectionPolicy.applyKeepSuggestions(to: &selectedForDelete, groups: [group])
+    }
+    
+    /// Bulk: purpose-risk groups in the current filter → mark all non-“建议保留” members.
+    private func applyKeepSuggestionsToFiltered() {
+        let pending = DeleteSelectionPolicy.purposeRiskGroupsNeedingSuggestions(
+            in: filteredGroups,
+            selection: selectedForDelete
+        )
+        guard !pending.isEmpty else { return }
+        DeleteSelectionPolicy.applyKeepSuggestions(to: &selectedForDelete, groups: pending)
+    }
 }
 
 /// Placeholder so ResultsView keeps filter state when parent owns chrome later.
@@ -202,9 +229,12 @@ struct ResultsChromeBar: View {
     @Binding var filter: ResultsListFilter
     @Binding var searchText: String
     let reviewCount: Int
+    /// Purpose-risk groups still unselected (for bulk “apply keep suggestions”).
+    var purposeRiskPendingCount: Int = 0
     let isVerifying: Bool
     let allExpanded: Bool
     let onToggleAll: () -> Void
+    var onApplyKeepSuggestions: (() -> Void)? = nil
     let onDeletePreview: () -> Void
     let onVerifyAllReview: () -> Void
     var onOpenSettings: (() -> Void)? = nil
@@ -313,6 +343,32 @@ struct ResultsChromeBar: View {
                     .buttonStyle(.plain)
                     .disabled(isVerifying)
                     .help("review.verify.all.help".localized)
+                }
+                
+                // Purpose-risk: default unchecked; one tap follows “建议保留” for many groups.
+                if purposeRiskPendingCount > 0, let onApplyKeepSuggestions {
+                    Button(action: onApplyKeepSuggestions) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checklist")
+                                .font(.system(size: 11, weight: .semibold))
+                            if compact {
+                                Text("results.apply.keep.short".localized(purposeRiskPendingCount))
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                            } else {
+                                Text("results.apply.keep".localized(purposeRiskPendingCount))
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                            }
+                        }
+                        .foregroundStyle(AppTheme.keep)
+                        .padding(.horizontal, compact ? 8 : 10)
+                        .padding(.vertical, 6)
+                        .background(AppTheme.keep.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isVerifying)
+                    .help("results.apply.keep.help".localized)
                 }
                 
                 Button(action: onDeletePreview) {

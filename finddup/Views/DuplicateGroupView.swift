@@ -9,9 +9,15 @@ struct OutlineGroupRow: View {
     let onToggle: () -> Void
     let onDeleteFile: (FileInfo) -> Void
     let onVerifyGroup: () -> Void
+    /// Optional: mark all non-keep members in this group (follow “建议保留”).
+    var onApplyKeepSuggestion: (() -> Void)? = nil
     
     private var purposeRisk: PackageIdentity.PurposeRisk {
         PackageIdentity.purposeRisk(for: group.files)
+    }
+    
+    private var canApplyKeepSuggestion: Bool {
+        group.files.count > 1 && selectedInGroup < group.files.count - 1
     }
     
     private var accent: Color {
@@ -120,12 +126,24 @@ struct OutlineGroupRow: View {
                         .padding(.bottom, 2)
                         .fixedSize(horizontal: false, vertical: true)
                     
-                    Text(PackageIdentity.selectHintKey(for: purposeRisk).localized)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, 4)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(PackageIdentity.selectHintKey(for: purposeRisk).localized)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        
+                        if let onApplyKeepSuggestion, canApplyKeepSuggestion {
+                            Button(action: onApplyKeepSuggestion) {
+                                Text("results.apply.keep.group".localized)
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .help("results.apply.keep.group.help".localized)
+                        }
+                    }
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 4)
                 } else if group.needsReview && !group.isVerified {
                     Text("review.suggested.hint".localized)
                         .font(.caption2)
@@ -335,12 +353,13 @@ typealias FileRow = OutlineMemberRow
 // MARK: - Default selection policy
 
 enum DeleteSelectionPolicy {
-    /// Seed marks after a scan. Identity-mismatch packages start with nothing selected.
+    /// Seed marks after a scan. Purpose-risk / identity-mismatch groups start empty
+    /// (user opts in via “Apply keep suggestions”).
     static func defaultSelection(for groups: [DuplicateGroup]) -> Set<URL> {
         var set = Set<URL>()
         for group in groups {
             if group.packageIdentityMismatch {
-                // User must opt-in — same shell / different names
+                // User must opt-in — same shell / different names / purpose risk
                 continue
             }
             for (index, file) in group.files.enumerated() where index > 0 {
@@ -348,6 +367,37 @@ enum DeleteSelectionPolicy {
             }
         }
         return set
+    }
+    
+    /// Mark every non-keep member (index > 0) in each group. Keeps index 0 (“建议保留”).
+    /// Used for purpose-risk bulk apply when the user trusts sort-for-keep order.
+    @discardableResult
+    static func applyKeepSuggestions(
+        to selection: inout Set<URL>,
+        groups: [DuplicateGroup]
+    ) -> Int {
+        var added = 0
+        for group in groups {
+            guard group.files.count > 1 else { continue }
+            for (index, file) in group.files.enumerated() where index > 0 {
+                if selection.insert(file.url).inserted {
+                    added += 1
+                }
+            }
+        }
+        return added
+    }
+    
+    /// Purpose-risk groups that still have no non-keep member marked.
+    static func purposeRiskGroupsNeedingSuggestions(
+        in groups: [DuplicateGroup],
+        selection: Set<URL>
+    ) -> [DuplicateGroup] {
+        groups.filter { group in
+            guard group.packageIdentityMismatch, group.files.count > 1 else { return false }
+            let nonKeepMarked = group.files.dropFirst().contains { selection.contains($0.url) }
+            return !nonKeepMarked
+        }
     }
     
     /// Keep selection in sync when groups shrink after deletes.
