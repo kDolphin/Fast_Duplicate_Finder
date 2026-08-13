@@ -302,6 +302,8 @@ enum StorageConcurrency: Sendable {
     
     /// Network hash concurrency (SMB Lr.Pics bench: 6 ≈ 2–3× throughput vs 3).
     static let networkConcurrency = 6
+    /// Network directory listing concurrency (parallel first-level subtrees).
+    static let networkEnumConcurrency = 6
     
     static func level(for roots: [URL], candidateSample: [FileInfo]) -> Int {
         let cores = ProcessInfo.processInfo.activeProcessorCount

@@ -403,6 +403,29 @@ enum FileEnumerator {
         var folderName: String
     }
     
+    /// Thread-safe progress counters for parallel NAS subtree listing.
+    private final class ProgressBucket: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var visited = 0
+        private(set) var files = 0
+        
+        func add(visited deltaV: Int, files deltaF: Int) -> (visited: Int, files: Int) {
+            lock.lock()
+            self.visited += deltaV
+            self.files += deltaF
+            let v = self.visited
+            let f = self.files
+            lock.unlock()
+            return (v, f)
+        }
+        
+        func snapshot() -> (visited: Int, files: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (visited, files)
+        }
+    }
+    
     static func enumerate(
         folders: [URL],
         settings: ScanSettings,
@@ -410,7 +433,7 @@ enum FileEnumerator {
         onProgress: @escaping @Sendable (Progress) -> Void
     ) async -> [FileInfo] {
         // Sequential roots so progress is readable; each root reports live callbacks.
-        // Parallel roots would interleave progress confusingly on multi-folder scans.
+        // Within a network root, first-level subtrees run in parallel (see below).
         var all: [FileInfo] = []
         var totalVisited = 0
         var totalFiles = 0
@@ -420,24 +443,46 @@ enum FileEnumerator {
         
         for folder in folders {
             if isCancelled() { break }
-            let isNetwork = folder.path.hasPrefix("/Volumes/")
+            let isNetwork = StorageConcurrency.isNetworkPath(folder.path)
             let name = folder.lastPathComponent
             let baseVisited = totalVisited
             let baseFiles = totalFiles
-            let batch = enumerateFolder(
-                folder,
-                settings: settings,
-                packageHashCache: packageHashCache,
-                isCancelled: isCancelled,
-                onTick: { visited, files in
-                    onProgress(Progress(
-                        visited: baseVisited + visited,
-                        files: baseFiles + files,
-                        isNetwork: isNetwork,
-                        folderName: name
-                    ))
-                }
-            )
+            
+            let batch: (files: [FileInfo], visited: Int)
+            if isNetwork {
+                batch = await enumerateNetworkRoot(
+                    folder,
+                    settings: settings,
+                    packageHashCache: packageHashCache,
+                    isCancelled: isCancelled,
+                    onTick: { visited, files in
+                        onProgress(Progress(
+                            visited: baseVisited + visited,
+                            files: baseFiles + files,
+                            isNetwork: true,
+                            folderName: name
+                        ))
+                    }
+                )
+            } else {
+                batch = enumerateSubtree(
+                    folder,
+                    settings: settings,
+                    packageHashCache: packageHashCache,
+                    isNetwork: false,
+                    manageSecurityScope: true,
+                    isCancelled: isCancelled,
+                    onTick: { visited, files in
+                        onProgress(Progress(
+                            visited: baseVisited + visited,
+                            files: baseFiles + files,
+                            isNetwork: false,
+                            folderName: name
+                        ))
+                    }
+                )
+            }
+            
             totalVisited = baseVisited + batch.visited
             totalFiles = baseFiles + batch.files.count
             all.append(contentsOf: batch.files)
@@ -451,37 +496,183 @@ enum FileEnumerator {
         return all
     }
     
-    private static func enumerateFolder(
+    // MARK: - Network parallel first-level subtrees
+    
+    /// List immediate children, process root-level files/packages, parallel-walk each subdirectory.
+    private static func enumerateNetworkRoot(
         _ folder: URL,
         settings: ScanSettings,
         packageHashCache: [String: CachedFileInfo],
         isCancelled: @escaping @Sendable () -> Bool,
         onTick: @escaping @Sendable (_ visited: Int, _ files: Int) -> Void
-    ) -> (files: [FileInfo], visited: Int) {
+    ) async -> (files: [FileInfo], visited: Int) {
         let accessed = folder.startAccessingSecurityScopedResource()
         defer {
             if accessed { folder.stopAccessingSecurityScopedResource() }
         }
         
-        // Skip package interiors (.app, BDMV/AVCHD, .photoslibrary, …).
-        // Product choice: treat packages as opaque (e.g. no Blu-ray BACKUP/CLIPINF pairs).
+        let keys = networkResourceKeys
         var options: FileManager.DirectoryEnumerationOptions = [.skipsPackageDescendants]
         if settings.skipHiddenFiles {
             options.insert(.skipsHiddenFiles)
         }
         
-        let isNetwork = folder.path.hasPrefix("/Volumes/")
-        // NAS: fewer metadata keys per entry (each attr can be an extra RTT)
-        var keys: [URLResourceKey] = [
-            .isRegularFileKey,
-            .isDirectoryKey,
-            .isPackageKey,
-            .fileSizeKey,
-            .contentModificationDateKey
-        ]
-        if !isNetwork {
-            keys.append(.creationDateKey)
+        let children: [URL]
+        do {
+            children = try FileManager.default.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: keys,
+                options: settings.skipHiddenFiles ? [.skipsHiddenFiles] : []
+            )
+        } catch {
+            // Fallback: single-threaded full walk if shallow list fails
+            return enumerateSubtree(
+                folder,
+                settings: settings,
+                packageHashCache: packageHashCache,
+                isNetwork: true,
+                manageSecurityScope: false,
+                isCancelled: isCancelled,
+                onTick: onTick
+            )
         }
+        
+        var rootFiles: [FileInfo] = []
+        var subdirs: [URL] = []
+        var visited = 0
+        rootFiles.reserveCapacity(64)
+        subdirs.reserveCapacity(children.count)
+        
+        for url in children {
+            if isCancelled() { break }
+            visited += 1
+            if settings.skipSystemFiles && isSystemPath(url) { continue }
+            let ext = url.pathExtension.lowercased()
+            if !ext.isEmpty && settings.excludedExtensions.contains(ext) { continue }
+            
+            do {
+                let values = try url.resourceValues(forKeys: Set(keys))
+                if values.isPackage == true, values.isDirectory == true {
+                    if let pkg = packageItem(
+                        url: url,
+                        values: values,
+                        settings: settings,
+                        packageHashCache: packageHashCache
+                    ) {
+                        rootFiles.append(pkg)
+                    }
+                    continue
+                }
+                if values.isDirectory == true {
+                    subdirs.append(url)
+                    continue
+                }
+                if let file = regularFileItem(url: url, values: values, settings: settings) {
+                    rootFiles.append(file)
+                }
+            } catch {
+                continue
+            }
+        }
+        
+        let progress = ProgressBucket()
+        _ = progress.add(visited: visited, files: rootFiles.count)
+        onTick(visited, rootFiles.count)
+        
+        // Stable order: path-sorted subtrees (helps NAS sequential access a bit)
+        subdirs.sort { $0.path < $1.path }
+        
+        let concurrency = StorageConcurrency.networkEnumConcurrency
+        var collected: [FileInfo] = rootFiles
+        collected.reserveCapacity(max(1024, rootFiles.count + subdirs.count * 32))
+        
+        await withTaskGroup(of: (files: [FileInfo], visited: Int).self) { group in
+            var next = 0
+            var inFlight = 0
+            
+            func enqueue() {
+                while next < subdirs.count && inFlight < concurrency {
+                    if isCancelled() { return }
+                    let dir = subdirs[next]
+                    next += 1
+                    inFlight += 1
+                    group.addTask {
+                        // Local counters; flush into shared bucket for UI (not every entry).
+                        var lastFlushV = 0
+                        var lastFlushF = 0
+                        let batch = enumerateSubtree(
+                            dir,
+                            settings: settings,
+                            packageHashCache: packageHashCache,
+                            isNetwork: true,
+                            manageSecurityScope: false,
+                            isCancelled: isCancelled,
+                            onTick: { v, f in
+                                let dV = v - lastFlushV
+                                let dF = f - lastFlushF
+                                guard dV >= 40 || dF >= 10 else { return }
+                                lastFlushV = v
+                                lastFlushF = f
+                                let snap = progress.add(visited: dV, files: dF)
+                                onTick(snap.visited, snap.files)
+                            }
+                        )
+                        // Flush remainder so totals match final batch.visited/files
+                        let remV = batch.visited - lastFlushV
+                        let remF = batch.files.count - lastFlushF
+                        if remV > 0 || remF > 0 {
+                            _ = progress.add(visited: remV, files: remF)
+                        }
+                        // Return zero visited/files so outer merge does not double-count
+                        return (batch.files, 0)
+                    }
+                }
+            }
+            
+            enqueue()
+            for await batch in group {
+                inFlight -= 1
+                if isCancelled() {
+                    group.cancelAll()
+                    break
+                }
+                collected.append(contentsOf: batch.files)
+                // Visited/files already flushed via ProgressBucket inside workers
+                let snap = progress.snapshot()
+                onTick(snap.visited, snap.files)
+                enqueue()
+            }
+        }
+        
+        let final = progress.snapshot()
+        onTick(final.visited, final.files)
+        return (collected, final.visited)
+    }
+    
+    // MARK: - Single-subtree walk
+    
+    /// Recursive enumerator for one folder tree.
+    /// - Parameter manageSecurityScope: true only for user-selected local roots.
+    private static func enumerateSubtree(
+        _ folder: URL,
+        settings: ScanSettings,
+        packageHashCache: [String: CachedFileInfo],
+        isNetwork: Bool,
+        manageSecurityScope: Bool,
+        isCancelled: @escaping @Sendable () -> Bool,
+        onTick: @escaping @Sendable (_ visited: Int, _ files: Int) -> Void
+    ) -> (files: [FileInfo], visited: Int) {
+        let accessed = manageSecurityScope ? folder.startAccessingSecurityScopedResource() : false
+        defer {
+            if accessed { folder.stopAccessingSecurityScopedResource() }
+        }
+        
+        var options: FileManager.DirectoryEnumerationOptions = [.skipsPackageDescendants]
+        if settings.skipHiddenFiles {
+            options.insert(.skipsHiddenFiles)
+        }
+        
+        let keys = isNetwork ? networkResourceKeys : localResourceKeys
         
         guard let enumerator = FileManager.default.enumerator(
             at: folder,
@@ -516,31 +707,21 @@ enum FileEnumerator {
                 let values = try url.resourceValues(forKeys: Set(keys))
                 
                 // Opaque package: one object, do not list interior as separate files
-                // (skipsPackageDescendants already prevents descent; still register the package)
                 if values.isPackage == true, values.isDirectory == true {
-                    if let pkg = PackageScanner.makePackageItem(
-                        at: url,
-                        skipHidden: settings.skipHiddenFiles,
-                        minSize: settings.minSizeBytes,
-                        maxSize: settings.maxSizeBytes,
-                        hashCache: packageHashCache
+                    if let pkg = packageItem(
+                        url: url,
+                        values: values,
+                        settings: settings,
+                        packageHashCache: packageHashCache
                     ) {
                         results.append(pkg)
                     }
                     continue
                 }
                 
-                guard values.isRegularFile == true else { continue }
-                let size = Int64(values.fileSize ?? 0)
-                guard size > 0 else { continue }
-                guard size >= settings.minSizeBytes && size <= settings.maxSizeBytes else { continue }
-                
-                // Never use Date() as fallback — that breaks cache/snapshot across relaunches
-                let mod = values.contentModificationDate
-                    ?? values.creationDate
-                    ?? Date(timeIntervalSince1970: 0)
-                let created = values.creationDate ?? mod
-                results.append(FileInfo(url: url, size: size, modificationDate: mod, creationDate: created))
+                if let file = regularFileItem(url: url, values: values, settings: settings) {
+                    results.append(file)
+                }
             } catch {
                 continue
             }
@@ -548,6 +729,60 @@ enum FileEnumerator {
         
         onTick(visited, results.count)
         return (results, visited)
+    }
+    
+    // MARK: - Item builders (reuse resourceValues — no second NAS RTT)
+    
+    private static var networkResourceKeys: [URLResourceKey] {
+        [
+            .isRegularFileKey,
+            .isDirectoryKey,
+            .isPackageKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ]
+    }
+    
+    private static var localResourceKeys: [URLResourceKey] {
+        networkResourceKeys + [.creationDateKey]
+    }
+    
+    private static func packageItem(
+        url: URL,
+        values: URLResourceValues,
+        settings: ScanSettings,
+        packageHashCache: [String: CachedFileInfo]
+    ) -> FileInfo? {
+        let mod = values.contentModificationDate
+            ?? values.creationDate
+            ?? Date(timeIntervalSince1970: 0)
+        let created = values.creationDate ?? mod
+        return PackageScanner.makePackageItem(
+            at: url,
+            skipHidden: settings.skipHiddenFiles,
+            minSize: settings.minSizeBytes,
+            maxSize: settings.maxSizeBytes,
+            hashCache: packageHashCache,
+            knownModificationDate: mod,
+            knownCreationDate: created
+        )
+    }
+    
+    private static func regularFileItem(
+        url: URL,
+        values: URLResourceValues,
+        settings: ScanSettings
+    ) -> FileInfo? {
+        guard values.isRegularFile == true else { return nil }
+        let size = Int64(values.fileSize ?? 0)
+        guard size > 0 else { return nil }
+        guard size >= settings.minSizeBytes && size <= settings.maxSizeBytes else { return nil }
+        // Never use Date() as fallback — that breaks cache/snapshot across relaunches
+        let mod = values.contentModificationDate
+            ?? values.creationDate
+            ?? Date(timeIntervalSince1970: 0)
+        let created = values.creationDate ?? mod
+        return FileInfo(url: url, size: size, modificationDate: mod, creationDate: created)
     }
     
     private static func isSystemPath(_ url: URL) -> Bool {

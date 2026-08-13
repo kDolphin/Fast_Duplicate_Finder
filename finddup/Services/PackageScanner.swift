@@ -14,20 +14,30 @@ enum PackageScanner: Sendable {
     
     /// One metadata walk: total size + path/size tree fingerprint.
     /// When `hashCache` has a fresh entry (same package-root mtime), skip the interior walk.
+    /// Pass `knownModificationDate` from the enumerator to avoid a second NAS metadata RTT.
     static func makePackageItem(
         at packageURL: URL,
         skipHidden: Bool,
         minSize: Int64,
         maxSize: Int64,
-        hashCache: [String: CachedFileInfo]? = nil
+        hashCache: [String: CachedFileInfo]? = nil,
+        knownModificationDate: Date? = nil,
+        knownCreationDate: Date? = nil
     ) -> FileInfo? {
-        let values = try? packageURL.resourceValues(forKeys: [
-            .contentModificationDateKey, .creationDateKey
-        ])
-        let mod = values?.contentModificationDate
-            ?? values?.creationDate
-            ?? Date(timeIntervalSince1970: 0)
-        let created = values?.creationDate ?? mod
+        let mod: Date
+        let created: Date
+        if let knownModificationDate {
+            mod = knownModificationDate
+            created = knownCreationDate ?? knownModificationDate
+        } else {
+            let values = try? packageURL.resourceValues(forKeys: [
+                .contentModificationDateKey, .creationDateKey
+            ])
+            mod = values?.contentModificationDate
+                ?? values?.creationDate
+                ?? Date(timeIntervalSince1970: 0)
+            created = values?.creationDate ?? mod
+        }
         let pathKey = packageURL.path.standardizedPath
         let modSec = Int64(mod.timeIntervalSince1970)
         
