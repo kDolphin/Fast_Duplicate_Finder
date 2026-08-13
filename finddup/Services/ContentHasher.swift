@@ -151,8 +151,9 @@ enum ContentHasher: Sendable {
         }
         
         if isNetwork {
-            // Head → mid → tail only, ascending seeks (HDD/NAS-friendly)
-            try feedNetworkThreePoint(handle: handle, fileSize: fileSize, sample: min(24 * 1024, fileSize)) { data in
+            // Head → mid → tail only, ascending seeks (HDD/NAS-friendly).
+            // 12KB windows: Lr.Pics SMB bench ~1.5× vs 24KB with same grouping on sample.
+            try feedNetworkThreePoint(handle: handle, fileSize: fileSize, sample: min(12 * 1024, fileSize)) { data in
                 h0.update(data)
                 h1.update(data)
             }
@@ -299,11 +300,13 @@ enum StorageConcurrency: Sendable {
         return networkHits * 2 >= n // ≥50% sample on network
     }
     
+    /// Network hash concurrency (SMB Lr.Pics bench: 6 ≈ 2–3× throughput vs 3).
+    static let networkConcurrency = 6
+    
     static func level(for roots: [URL], candidateSample: [FileInfo]) -> Int {
         let cores = ProcessInfo.processInfo.activeProcessorCount
         if isNetworkScan(roots: roots, sample: candidateSample) {
-            // NAS: open/RTT dominate — keep concurrency low to avoid thrashing
-            return min(3, max(2, cores / 2))
+            return networkConcurrency
         }
         
         var sawSSD = false
@@ -312,7 +315,7 @@ enum StorageConcurrency: Sendable {
         for root in roots.prefix(3) {
             if let vals = try? root.resourceValues(forKeys: [.volumeIsLocalKey, ssdKey]) {
                 if vals.volumeIsLocal == false {
-                    return min(3, max(2, cores / 2))
+                    return networkConcurrency
                 }
                 if let isSSD = vals.allValues[ssdKey] as? Bool {
                     if isSSD { sawSSD = true } else { sawHDD = true }
