@@ -310,8 +310,20 @@ actor ScanPipeline {
             return ([], stats, timing)
         }
         
+        // Finalize starts immediately after hash so grouping / sentinels / I/O
+        // are never an unaccounted gap (that used to make total ≫ sum of bars).
+        let finalizeStart = Date()
         doneCandidates = candidates.count
         stats.processedFiles = singletonCount + doneCandidates
+        
+        await progress(.init(
+            phase: "scan.phase.finalizing",
+            message: "scan.finalizing",
+            phaseDetail: "\(doneCandidates)",
+            percent: 0.93,
+            estimatedRemaining: 0,
+            stats: stats
+        ))
         
         // same-size candidate counts for review heuristics
         let sizeBucketCounts = Dictionary(uniqueKeysWithValues: multiSize.map { ($0.key, $0.value.count) })
@@ -366,7 +378,6 @@ actor ScanPipeline {
             timing.path = .full
         }
         
-        let finalizeStart = Date()
         await progress(.init(
             phase: "scan.phase.finalizing",
             message: "scan.finalizing",
@@ -414,6 +425,7 @@ actor ScanPipeline {
         
         stats.processedFiles = unique.count
         timing.finalize = Date().timeIntervalSince(finalizeStart)
+        // Contiguous wall clock for this pipeline leg (prepare+hash+finalize ≈ total).
         timing.total = Date().timeIntervalSince(started)
         
         await progress(.init(

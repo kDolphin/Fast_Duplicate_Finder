@@ -537,14 +537,20 @@ struct ResultsEmptyFilterView: View {
 }
 
 enum ResultsDuration {
+    /// Stable multi-unit strings so "39分钟" never hides the missing ~15 min gap.
     static func format(_ t: TimeInterval) -> String {
         if t < 0.001 { return "duration.under_ms".localized }
         if t < 1 { return "duration.ms".localized(t * 1000) }
         if t < 60 { return "duration.s".localized(t) }
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.hour, .minute, .second]
-        formatter.unitsStyle = .abbreviated
-        return formatter.string(from: t) ?? "duration.s".localized(t)
+        let totalSec = Int(t.rounded(.towardZero))
+        let hours = totalSec / 3600
+        let minutes = (totalSec % 3600) / 60
+        let seconds = totalSec % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        // Always show seconds past 1 minute (e.g. 39:42) so bars and total can be checked.
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

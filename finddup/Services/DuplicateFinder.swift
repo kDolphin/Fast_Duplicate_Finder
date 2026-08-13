@@ -113,6 +113,9 @@ final class DuplicateFinder: ObservableObject {
             
             await self.pipeline.reset()
             
+            // Wall clock for the whole run (must equal enumerate + pipeline phases).
+            let scanWallStart = Date()
+            
             // 1) Enumerate (off main actor) — live progress while walking (critical for NAS)
             self.currentPhase = "scan.phase.scanning".localized
             self.scanProgress = "scan.files".localized
@@ -162,9 +165,17 @@ final class DuplicateFinder: ObservableObject {
                 return
             }
             
+            let wallTotal = Date().timeIntervalSince(scanWallStart)
             var timing = result.timing
             timing.enumerate = enumerateDuration
-            timing.total = enumerateDuration + result.timing.total
+            // Prefer real wall clock; fold any tiny hop/scheduling slack into finalize
+            // so the four bars always sum to the reported total.
+            let phases =
+                timing.enumerate + timing.prepare + timing.hashing + timing.finalize
+            if wallTotal > phases {
+                timing.finalize += wallTotal - phases
+            }
+            timing.total = max(wallTotal, phases)
             
             self.duplicateGroups = result.groups
             self.scanStatistics.apply(result.stats)
