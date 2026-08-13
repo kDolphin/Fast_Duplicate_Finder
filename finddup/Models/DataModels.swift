@@ -126,6 +126,24 @@ enum PackageIdentity {
         case differentNames
     }
     
+    // Precompiled once — per-call NSRegularExpression was a major group-build cost.
+    private static let copySuffixRegexes: [NSRegularExpression] = {
+        let patterns = [
+            #"\s+copy(\s+\d+)?$"#,
+            #"\s+副本(\s*\d+)?$"#,
+            #"\s+的副本$"#,
+            #"\s*\(\d+\)$"#,
+            #"[-_]+copy(\d+)?$"#,
+            #"[-_]+副本(\d+)?$"#
+        ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
+    }()
+    
+    private static let embeddedLocaleRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"[._-]([a-z]{2,3})[_-]([A-Za-z]{2,8})(?=$|[._-])"#,
+        options: []
+    )
+    
     /// True when basenames are essentially the same (copy / 副本 / (1) variants).
     static func basenamesAreRelated(_ names: [String]) -> Bool {
         let stems = Set(names.map { normalizeBasename($0) }.filter { !$0.isEmpty })
@@ -138,10 +156,15 @@ enum PackageIdentity {
     }
     
     /// Comprehensive purpose check (order: locale → multi-product → name/package).
+    /// Uses `pathKey` strings only — never `URL.standardizedFileURL` (filesystem hit
+    /// freezes NAS group assembly at ~tens of groups/s with near-zero CPU).
     static func purposeRisk(for members: [FileInfo]) -> PurposeRisk {
         guard members.count > 1 else { return .none }
         let names = members.map { $0.url.lastPathComponent }
-        let paths = members.map { $0.url.path }
+        let paths = members.map(\.pathKey)
+        
+        let exactNames = Set(names.map { $0.precomposedStringWithCanonicalMapping.lowercased() })
+        let sameName = exactNames.count == 1
         
         // 1) Locale encoded in filename (content.fr_CA.json)
         if looksLikeLocaleVariants(names) {
@@ -165,16 +188,13 @@ enum PackageIdentity {
         }
         
         // 4) Package shells with different display names
-        if members.allSatisfy(\.isPackage), !basenamesAreRelated(names) {
+        if members.allSatisfy(\.isPackage), !sameName, !basenamesAreRelated(names) {
             return .packageShell
         }
         
         // 5) Different basenames that are not copy/副本 variants
-        if !basenamesAreRelated(names) {
-            let exact = Set(names.map { $0.precomposedStringWithCanonicalMapping.lowercased() })
-            if exact.count > 1 {
-                return .differentNames
-            }
+        if !sameName, !basenamesAreRelated(names) {
+            return .differentNames
         }
         
         return .none
@@ -201,29 +221,17 @@ enum PackageIdentity {
         var s = (name as NSString).deletingPathExtension
         s = s.precomposedStringWithCanonicalMapping.lowercased()
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Also strip locale tokens so content.fr_ca ≈ content.fr_fr after compare of “core” name
-        // (used only for relatedness of *copy* variants; locale detection is separate)
         
         var changed = true
         while changed {
             changed = false
             let before = s
-            let patterns: [String] = [
-                #"\s+copy(\s+\d+)?$"#,
-                #"\s+副本(\s*\d+)?$"#,
-                #"\s+的副本$"#,
-                #"\s*\(\d+\)$"#,
-                #"[-_]+copy(\d+)?$"#,
-                #"[-_]+副本(\d+)?$"#
-            ]
-            for pattern in patterns {
-                if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                    let range = NSRange(s.startIndex..<s.endIndex, in: s)
-                    let next = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
-                    if next != s {
-                        s = next.trimmingCharacters(in: .whitespacesAndNewlines)
-                        changed = true
-                    }
+            for regex in copySuffixRegexes {
+                let range = NSRange(s.startIndex..<s.endIndex, in: s)
+                let next = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
+                if next != s {
+                    s = next.trimmingCharacters(in: .whitespacesAndNewlines)
+                    changed = true
                 }
             }
             if s == before { break }
@@ -238,10 +246,7 @@ enum PackageIdentity {
         let base = (filename as NSString).deletingPathExtension
         if let t = parseLocaleToken(base) { return t }
         // Embedded: content.fr_CA / foo-en_US-bar
-        let pattern = #"[._-]([a-z]{2,3})[_-]([A-Za-z]{2,8})(?=$|[._-])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            return nil
-        }
+        guard let regex = embeddedLocaleRegex else { return nil }
         let range = NSRange(base.startIndex..<base.endIndex, in: base)
         let matches = regex.matches(in: base, options: [], range: range)
         guard let last = matches.last,
@@ -271,8 +276,7 @@ enum PackageIdentity {
     static func stemWithoutLocale(_ filename: String) -> String {
         var s = (filename as NSString).deletingPathExtension
             .precomposedStringWithCanonicalMapping
-        let pattern = #"[._-]([a-z]{2,3})[_-]([A-Za-z]{2,8})(?=$|[._-])"#
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+        if let regex = embeddedLocaleRegex {
             let range = NSRange(s.startIndex..<s.endIndex, in: s)
             s = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
         }
@@ -354,25 +358,41 @@ enum PackageIdentity {
         "osax", "mdimporter", "preferencemode", "instrdst", "kext"
     ]
     
-    /// Nearest product root directory path, if any.
-    static func productRoot(for path: String) -> String? {
-        var url = URL(fileURLWithPath: path)
-        // Start from parent of file
-        if !url.hasDirectoryPath || url.pathExtension.isEmpty == false && url.pathExtension.count <= 8 {
-            // file path → parent
-            url = url.deletingLastPathComponent()
+    /// Parent directory of a POSIX path (string-only, no filesystem).
+    private static func parentPath(_ path: String) -> String? {
+        if path == "/" { return nil }
+        var p = path
+        if p.count > 1, p.hasSuffix("/") { p = String(p.dropLast()) }
+        guard let slash = p.lastIndex(of: "/") else { return nil }
+        if slash == p.startIndex { return "/" }
+        return String(p[..<slash])
+    }
+    
+    private static func lastPathComponent(_ path: String) -> String {
+        if path == "/" { return "/" }
+        var p = path
+        if p.count > 1, p.hasSuffix("/") { p = String(p.dropLast()) }
+        if let slash = p.lastIndex(of: "/") {
+            return String(p[p.index(after: slash)...])
         }
-        var current = url
+        return p
+    }
+    
+    private static func pathExtension(_ name: String) -> String {
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return "" }
+        return String(name[name.index(after: dot)...]).lowercased()
+    }
+    
+    /// Nearest product root directory path, if any. String-only — no URL FS access.
+    static func productRoot(for path: String) -> String? {
+        var current = parentPath(path) ?? path
         for _ in 0..<24 {
-            let ext = current.pathExtension.lowercased()
+            let name = lastPathComponent(current)
+            let ext = pathExtension(name)
             if productRootExtensions.contains(ext) {
-                return current.standardizedFileURL.path
+                return current
             }
-            // Directory named like Foo.ccl without extension edge cases handled above
-            let name = current.lastPathComponent
-            if name.hasPrefix("."), current.path == "/" { break }
-            let parent = current.deletingLastPathComponent()
-            if parent.path == current.path { break }
+            guard let parent = parentPath(current), parent != current else { break }
             current = parent
         }
         return nil
@@ -380,15 +400,12 @@ enum PackageIdentity {
     
     static func pathRelativeToProductRoot(_ path: String) -> (root: String, relative: String)? {
         guard let root = productRoot(for: path) else { return nil }
-        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
-        let rootStd = URL(fileURLWithPath: root).standardizedFileURL.path
-        guard standardized.hasPrefix(rootStd) else { return nil }
-        var rel = String(standardized.dropFirst(rootStd.count))
+        guard path.hasPrefix(root) else { return nil }
+        var rel = String(path.dropFirst(root.count))
         if rel.hasPrefix("/") { rel = String(rel.dropFirst()) }
-        // Normalize
         rel = rel.precomposedStringWithCanonicalMapping
         guard !rel.isEmpty else { return nil }
-        return (rootStd, rel)
+        return (root, rel)
     }
     
     /// Different product roots, identical relative path inside each (same role).
@@ -421,9 +438,8 @@ enum PackageIdentity {
         let exactNames = Set(names.map { $0.precomposedStringWithCanonicalMapping.lowercased() })
         guard exactNames.count == 1 || basenamesAreRelated(names) else { return false }
         
-        let standardized = paths.map {
-            URL(fileURLWithPath: $0).standardizedFileURL.path.precomposedStringWithCanonicalMapping
-        }
+        // pathKey / standardized strings only — never standardizedFileURL (NAS I/O).
+        let standardized = paths.map { $0.precomposedStringWithCanonicalMapping }
         guard let common = longestCommonDirectoryPrefix(standardized) else { return false }
         let commonDepth = common.split(separator: "/").filter { !$0.isEmpty }.count
         // Avoid flagging under shallow roots like /Users/me
