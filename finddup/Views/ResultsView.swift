@@ -22,7 +22,7 @@ enum ResultsListFilter: String, CaseIterable, Identifiable {
 
 struct ResultsView: View {
     let duplicateGroups: [DuplicateGroup]
-    @Binding var expandedGroups: Set<UUID>
+    @Binding var expandState: GroupExpandState
     @Binding var selectedForDelete: Set<URL>
     let onDeletePreview: () -> Void
     let onDeleteFile: (FileInfo) -> Void
@@ -43,15 +43,18 @@ struct ResultsView: View {
     @State private var searchText = ""
     
     private var reviewCount: Int {
-        duplicateGroups.filter { $0.needsReview && !$0.isVerified }.count
+        duplicateGroups.reduce(0) { $0 + (($1.needsReview && !$1.isVerified) ? 1 : 0) }
     }
     
     /// Purpose-risk groups in the current filter that still need “apply keep suggestions”.
     private var purposeRiskPendingCount: Int {
-        DeleteSelectionPolicy.purposeRiskGroupsNeedingSuggestions(
-            in: filteredGroups,
-            selection: selectedForDelete
-        ).count
+        // Cheap path: only scan packageIdentityMismatch groups (usually ≪ total).
+        var n = 0
+        for group in filteredGroups where group.packageIdentityMismatch && group.files.count > 1 {
+            let nonKeepMarked = group.files.dropFirst().contains { selectedForDelete.contains($0.url) }
+            if !nonKeepMarked { n += 1 }
+        }
+        return n
     }
     
     var totalSize: Int64 {
@@ -80,9 +83,9 @@ struct ResultsView: View {
         return list
     }
     
+    /// O(1) for bulk expand-all; no scanning tens of thousands of IDs.
     private var allFilteredExpanded: Bool {
-        let ids = filteredGroups.map(\.id)
-        return !ids.isEmpty && ids.allSatisfy { expandedGroups.contains($0) }
+        expandState.isFullyExpanded
     }
     
     var body: some View {
@@ -144,11 +147,13 @@ struct ResultsView: View {
                 ResultsEmptyFilterView(filter: filter, hasSearch: !searchText.isEmpty)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 4) {
+                    // LazyVStack: only visible rows materialize. Expand-all must stay O(1)
+                    // (GroupExpandState.expandAll) so we never build 40k expanded trees at once.
+                    LazyVStack(spacing: 4, pinnedViews: []) {
                         ForEach(filteredGroups) { group in
                             OutlineGroupRow(
                                 group: group,
-                                isExpanded: expandedGroups.contains(group.id),
+                                isExpanded: expandState.isExpanded(group.id),
                                 isVerifying: isVerifying,
                                 selectedForDelete: $selectedForDelete,
                                 onToggle: { toggleGroup(group.id) },
@@ -158,6 +163,7 @@ struct ResultsView: View {
                                     ? { applyKeepSuggestion(for: group) }
                                     : nil
                             )
+                            .id(group.id)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -180,20 +186,16 @@ struct ResultsView: View {
     }
     
     private func toggleAllFiltered() {
-        let ids = filteredGroups.map(\.id)
-        if allFilteredExpanded {
-            for id in ids { expandedGroups.remove(id) }
+        // O(1): do not insert 40k UUIDs into a Set (that freezes the main thread).
+        if expandState.isFullyExpanded {
+            expandState.collapseAllGroups()
         } else {
-            for id in ids { expandedGroups.insert(id) }
+            expandState.expandAllGroups()
         }
     }
     
     private func toggleGroup(_ id: UUID) {
-        if expandedGroups.contains(id) {
-            expandedGroups.remove(id)
-        } else {
-            expandedGroups.insert(id)
-        }
+        expandState.toggle(id)
     }
     
     private func applyKeepSuggestion(for group: DuplicateGroup) {

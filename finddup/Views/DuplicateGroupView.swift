@@ -12,12 +12,15 @@ struct OutlineGroupRow: View {
     /// Optional: mark all non-keep members in this group (follow “建议保留”).
     var onApplyKeepSuggestion: (() -> Void)? = nil
     
-    private var purposeRisk: PackageIdentity.PurposeRisk {
-        PackageIdentity.purposeRisk(for: group.files)
-    }
+    private static let sizeFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
     
     private var canApplyKeepSuggestion: Bool {
-        group.files.count > 1 && selectedInGroup < group.files.count - 1
+        guard isExpanded, group.files.count > 1 else { return false }
+        return group.files.dropFirst().contains { !selectedForDelete.contains($0.url) }
     }
     
     private var accent: Color {
@@ -29,11 +32,13 @@ struct OutlineGroupRow: View {
     }
     
     private var selectedInGroup: Int {
-        group.files.filter { selectedForDelete.contains($0.url) }.count
+        guard isExpanded else { return 0 }
+        return group.files.reduce(0) { $0 + (selectedForDelete.contains($1.url) ? 1 : 0) }
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Header only — keep collapsed rows cheap for 10k–40k lists.
             Button(action: onToggle) {
                 HStack(spacing: 8) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -56,9 +61,8 @@ struct OutlineGroupRow: View {
                     }
                     
                     if group.packageIdentityMismatch {
-                        let key = PackageIdentity.badgeKey(for: purposeRisk)
                         StatusChip(
-                            title: (key.isEmpty ? "review.package.names.differ" : key).localized,
+                            title: group.purposeBadgeKey.localized,
                             color: AppTheme.review
                         )
                     } else if group.isVerified {
@@ -75,18 +79,18 @@ struct OutlineGroupRow: View {
                     
                     Spacer(minLength: 6)
                     
-                    Text(ByteCountFormatter.string(fromByteCount: group.fileSize, countStyle: .file))
+                    Text(Self.sizeFormatter.string(fromByteCount: group.fileSize))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                     
-                    Text(ByteCountFormatter.string(fromByteCount: group.duplicateSize, countStyle: .file))
+                    Text(Self.sizeFormatter.string(fromByteCount: group.duplicateSize))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .frame(minWidth: 56, alignment: .trailing)
                         .help("results.group.waste".localized(
-                            ByteCountFormatter.string(fromByteCount: group.duplicateSize, countStyle: .file)
+                            Self.sizeFormatter.string(fromByteCount: group.duplicateSize)
                         ))
                     
                     if group.needsReview && !group.isVerified && !group.packageIdentityMismatch {
@@ -118,59 +122,7 @@ struct OutlineGroupRow: View {
             .buttonStyle(.plain)
             
             if isExpanded {
-                if group.packageIdentityMismatch {
-                    Text(PackageIdentity.hintKey(for: purposeRisk, members: group.files).localized)
-                        .font(.caption2)
-                        .foregroundStyle(AppTheme.review.opacity(0.95))
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    HStack(alignment: .top, spacing: 10) {
-                        Text(PackageIdentity.selectHintKey(for: purposeRisk).localized)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        
-                        if let onApplyKeepSuggestion, canApplyKeepSuggestion {
-                            Button(action: onApplyKeepSuggestion) {
-                                Text("results.apply.keep.group".localized)
-                                    .font(.caption2.weight(.semibold))
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                            .help("results.apply.keep.group.help".localized)
-                        }
-                    }
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 4)
-                } else if group.needsReview && !group.isVerified {
-                    Text("review.suggested.hint".localized)
-                        .font(.caption2)
-                        .foregroundStyle(AppTheme.review.opacity(0.9))
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, 4)
-                } else {
-                    Text("results.select.hint".localized)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, 4)
-                }
-                
-                VStack(spacing: 0) {
-                    ForEach(Array(group.files.enumerated()), id: \.offset) { index, file in
-                        OutlineMemberRow(
-                            file: file,
-                            isRecommendedKeep: index == 0,
-                            isMarkedForDelete: selectedForDelete.contains(file.url),
-                            packageIdentityRisk: group.packageIdentityMismatch,
-                            onToggleMark: { toggleMark(file) },
-                            onDelete: { onDeleteFile(file) }
-                        )
-                    }
-                }
-                .padding(.bottom, 4)
+                expandedDetails
             }
         }
         .background(
@@ -184,6 +136,63 @@ struct OutlineGroupRow: View {
                     lineWidth: 1
                 )
         )
+    }
+    
+    @ViewBuilder
+    private var expandedDetails: some View {
+        if group.packageIdentityMismatch {
+            Text(group.purposeHintKey.localized)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.review.opacity(0.95))
+                .padding(.horizontal, 40)
+                .padding(.bottom, 2)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            HStack(alignment: .top, spacing: 10) {
+                Text(group.purposeSelectHintKey.localized)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                if let onApplyKeepSuggestion, canApplyKeepSuggestion {
+                    Button(action: onApplyKeepSuggestion) {
+                        Text("results.apply.keep.group".localized)
+                            .font(.caption2.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("results.apply.keep.group.help".localized)
+                }
+            }
+            .padding(.horizontal, 40)
+            .padding(.bottom, 4)
+        } else if group.needsReview && !group.isVerified {
+            Text("review.suggested.hint".localized)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.review.opacity(0.9))
+                .padding(.horizontal, 40)
+                .padding(.bottom, 4)
+        } else {
+            Text("results.select.hint".localized)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 4)
+        }
+        
+        VStack(spacing: 0) {
+            ForEach(Array(group.files.enumerated()), id: \.offset) { index, file in
+                OutlineMemberRow(
+                    file: file,
+                    isRecommendedKeep: index == 0,
+                    isMarkedForDelete: selectedForDelete.contains(file.url),
+                    packageIdentityRisk: group.packageIdentityMismatch,
+                    onToggleMark: { toggleMark(file) },
+                    onDelete: { onDeleteFile(file) }
+                )
+            }
+        }
+        .padding(.bottom, 4)
     }
     
     private func toggleMark(_ file: FileInfo) {

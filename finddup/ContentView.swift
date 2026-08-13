@@ -7,7 +7,7 @@ struct ContentView: View {
     @State private var isScanning = false
     @State private var showingPermissionAlert = false
     @State private var permissionDeniedPath: String = ""
-    @State private var expandedGroups: Set<UUID> = []
+    @State private var groupExpandState = GroupExpandState()
     @State private var showingDeletePreview = false
     @State private var filesToDelete: Set<URL> = []
     @State private var isDeleting = false
@@ -60,7 +60,7 @@ struct ContentView: View {
                 } else if !duplicateFinder.duplicateGroups.isEmpty {
                     ResultsView(
                         duplicateGroups: duplicateFinder.duplicateGroups,
-                        expandedGroups: $expandedGroups,
+                        expandState: $groupExpandState,
                         selectedForDelete: $filesToDelete,
                         onDeletePreview: {
                             if autoDeleteDuplicates {
@@ -188,7 +188,7 @@ struct ContentView: View {
         duplicateFinder.duplicateGroups = []
         duplicateFinder.errorMessage = nil
         filesToDelete.removeAll()
-        expandedGroups.removeAll()
+        groupExpandState.reset()
         
         isScanning = true
         duplicateFinder.findDuplicates(in: selectedFolders) {

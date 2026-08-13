@@ -54,6 +54,12 @@ struct DuplicateGroup: Identifiable, Sendable {
     var isVerified: Bool
     /// Package members share content but have unrelated names (wrapper / multi-launcher shells)
     var packageIdentityMismatch: Bool
+    /// Precomputed localization key for purpose-risk badge (avoid recompute in list body).
+    var purposeBadgeKey: String
+    /// Precomputed hint key when expanded under purpose-risk.
+    var purposeHintKey: String
+    /// Precomputed select-hint key for purpose-risk rows.
+    var purposeSelectHintKey: String
     
     init(
         files: [FileInfo],
@@ -71,6 +77,17 @@ struct DuplicateGroup: Identifiable, Sendable {
         self.needsReview = needsReview
         self.isVerified = isVerified
         self.packageIdentityMismatch = packageIdentityMismatch
+        if packageIdentityMismatch {
+            let risk = PackageIdentity.purposeRisk(for: files)
+            let badge = PackageIdentity.badgeKey(for: risk)
+            self.purposeBadgeKey = badge.isEmpty ? "review.package.names.differ" : badge
+            self.purposeHintKey = PackageIdentity.hintKey(for: risk, members: files)
+            self.purposeSelectHintKey = PackageIdentity.selectHintKey(for: risk)
+        } else {
+            self.purposeBadgeKey = ""
+            self.purposeHintKey = ""
+            self.purposeSelectHintKey = ""
+        }
     }
     
     var totalSize: Int64 {
@@ -621,6 +638,47 @@ struct ScanStatisticsSnapshot: Sendable {
         let done = cachedFiles + newFiles
         guard done > 0 else { return 0 }
         return Double(cachedFiles) / Double(done)
+    }
+}
+
+/// Expand/collapse for huge result lists (10k–40k+ groups).
+/// Expand-all is O(1): a flag, not inserting tens of thousands of UUIDs into a Set.
+struct GroupExpandState: Equatable {
+    /// When true, every group is expanded except IDs in `exceptions`.
+    /// When false, only IDs in `exceptions` are expanded.
+    var expandAll: Bool = false
+    var exceptions: Set<UUID> = []
+    
+    func isExpanded(_ id: UUID) -> Bool {
+        expandAll ? !exceptions.contains(id) : exceptions.contains(id)
+    }
+    
+    /// True when bulk-expand is on with no per-row collapses (toolbar “collapse all” state).
+    var isFullyExpanded: Bool {
+        expandAll && exceptions.isEmpty
+    }
+    
+    mutating func toggle(_ id: UUID) {
+        if exceptions.contains(id) {
+            exceptions.remove(id)
+        } else {
+            exceptions.insert(id)
+        }
+    }
+    
+    mutating func expandAllGroups() {
+        expandAll = true
+        exceptions.removeAll(keepingCapacity: false)
+    }
+    
+    mutating func collapseAllGroups() {
+        expandAll = false
+        exceptions.removeAll(keepingCapacity: false)
+    }
+    
+    mutating func reset() {
+        expandAll = false
+        exceptions.removeAll(keepingCapacity: false)
     }
 }
 
