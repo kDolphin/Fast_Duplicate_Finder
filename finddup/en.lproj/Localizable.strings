@@ -52,6 +52,10 @@
 "scan.prepare.snapshot" = "Checking previous results…";
 "scan.prepare.cache" = "Loading hash cache…";
 "scan.prepare.match" = "Matching against cache…";
+"scan.finalize.groups" = "Building duplicate groups…";
+"scan.finalize.groups.detail" = "Assembling results";
+"scan.finalize.groups.count" = "%d groups so far";
+"scan.finalize.persist" = "Saving cache…";
 "scan.cache.hit" = "Unchanged since last scan — reusing results";
 "scan.cache.hit.detail" = "Skipped re-hashing (file list signature match)";
 "scan.cache.reuse.detail" = "All candidates served from disk cache";

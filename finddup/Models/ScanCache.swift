@@ -86,7 +86,8 @@ struct ScanCache: Codable {
     private static let maxCacheSize: Int64 = 300 * 1024 * 1024 // 300MB估算大小
     
     mutating func cleanObsoleteEntries(currentFiles: [FileInfo], scanPaths: [URL]) {
-        let currentFilePaths = Set(currentFiles.map { $0.url.path.standardizedPath })
+        // Prefer cached pathKey — avoid re-standardizing 100k+ paths on every save.
+        let currentFilePaths = Set(currentFiles.map(\.pathKey))
         let scanPathStrings = scanPaths.map { $0.path.standardizedPath }
         
         // Only drop entries under current roots that no longer exist (O(cache) but no logging)
@@ -338,13 +339,31 @@ class ScanCacheManager {
         return paths.filter { $0 != cacheFileURL } // 排除当前路径
     }
     
-    func saveCache(_ cache: ScanCache) {
+    /// - Parameter syncDisk: when false, update memory immediately and encode/write on a utility queue
+    ///   so large NAS scans are not blocked for tens of seconds on a 10MB+ plist.
+    func saveCache(_ cache: ScanCache, syncDisk: Bool = true) {
         hotLock.lock()
         hotCache = cache
         hotLock.unlock()
+        if syncDisk {
+            persistCacheToDisk(cache)
+        } else {
+            let url = cacheFileURL
+            let binary = useBinaryFormat
+            Task.detached(priority: .utility) {
+                Self.writeCacheFile(cache, to: url, binary: binary)
+            }
+        }
+    }
+    
+    private func persistCacheToDisk(_ cache: ScanCache) {
+        Self.writeCacheFile(cache, to: cacheFileURL, binary: useBinaryFormat)
+    }
+    
+    private static func writeCacheFile(_ cache: ScanCache, to cacheFileURL: URL, binary: Bool) {
         do {
             let data: Data
-            if useBinaryFormat {
+            if binary {
                 let encoder = PropertyListEncoder()
                 encoder.outputFormat = .binary
                 data = try encoder.encode(cache)
@@ -356,13 +375,17 @@ class ScanCacheManager {
             
             let tempURL = cacheFileURL.appendingPathExtension("tmp")
             try data.write(to: tempURL)
-            _ = try FileManager.default.replaceItem(
-                at: cacheFileURL,
-                withItemAt: tempURL,
-                backupItemName: nil,
-                options: [],
-                resultingItemURL: nil
-            )
+            if FileManager.default.fileExists(atPath: cacheFileURL.path) {
+                _ = try FileManager.default.replaceItem(
+                    at: cacheFileURL,
+                    withItemAt: tempURL,
+                    backupItemName: nil,
+                    options: [],
+                    resultingItemURL: nil
+                )
+            } else {
+                try FileManager.default.moveItem(at: tempURL, to: cacheFileURL)
+            }
         } catch {
             // Silent fail — scan results still valid without durable cache
         }

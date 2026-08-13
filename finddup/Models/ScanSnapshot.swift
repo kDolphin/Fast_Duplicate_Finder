@@ -171,6 +171,8 @@ enum ScanSnapshotStore {
     /// v2: only complete scans publish snapshots. v1 files may contain incomplete
     /// groups written after cancel and are intentionally ignored.
     private static let fileName = "last_scan_snapshot_v2.plist"
+    private static let hotLock = NSLock()
+    private static var hotSnapshot: ScanResultSnapshot?
     
     /// Prefer Application Support (not purged like Caches).
     private static var fileURLs: [URL] {
@@ -189,17 +191,40 @@ enum ScanSnapshotStore {
     }
     
     static func load() -> ScanResultSnapshot? {
+        hotLock.lock()
+        if let hotSnapshot {
+            let snap = hotSnapshot
+            hotLock.unlock()
+            return snap
+        }
+        hotLock.unlock()
         for url in fileURLs {
             guard let data = try? Data(contentsOf: url),
                   let snap = try? PropertyListDecoder().decode(ScanResultSnapshot.self, from: data) else {
                 continue
             }
+            hotLock.lock()
+            hotSnapshot = snap
+            hotLock.unlock()
             return snap
         }
         return nil
     }
     
-    static func save(_ snapshot: ScanResultSnapshot) {
+    static func save(_ snapshot: ScanResultSnapshot, syncDisk: Bool = true) {
+        hotLock.lock()
+        hotSnapshot = snapshot
+        hotLock.unlock()
+        if syncDisk {
+            writeToDisk(snapshot)
+        } else {
+            Task.detached(priority: .utility) {
+                writeToDisk(snapshot)
+            }
+        }
+    }
+    
+    private static func writeToDisk(_ snapshot: ScanResultSnapshot) {
         guard let data = try? PropertyListEncoder().encode(snapshot) else { return }
         for url in fileURLs {
             let tmp = url.appendingPathExtension("tmp")
@@ -224,6 +249,9 @@ enum ScanSnapshotStore {
     }
     
     static func clear() {
+        hotLock.lock()
+        hotSnapshot = nil
+        hotLock.unlock()
         for url in fileURLs {
             try? FileManager.default.removeItem(at: url)
         }

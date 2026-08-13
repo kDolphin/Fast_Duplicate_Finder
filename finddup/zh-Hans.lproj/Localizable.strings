@@ -52,6 +52,10 @@
 "scan.prepare.snapshot" = "正在检查上次结果…";
 "scan.prepare.cache" = "正在加载哈希缓存…";
 "scan.prepare.match" = "正在匹配缓存…";
+"scan.finalize.groups" = "正在构建重复组…";
+"scan.finalize.groups.detail" = "正在组装结果";
+"scan.finalize.groups.count" = "已形成 %d 组";
+"scan.finalize.persist" = "正在保存缓存…";
 "scan.cache.hit" = "与上次扫描一致 — 复用结果";
 "scan.cache.hit.detail" = "文件列表未变，已跳过重新哈希";
 "scan.cache.reuse.detail" = "候选均来自磁盘缓存";

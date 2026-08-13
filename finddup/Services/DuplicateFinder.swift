@@ -359,14 +359,21 @@ final class DuplicateFinder: ObservableObject {
     private func applyProgress(_ update: ScanProgressUpdate) {
         currentPhase = update.phase.localized
         scanProgress = update.message.localized
-        if update.phaseDetail == "scan.cache.hit.detail" || update.phaseDetail == "scan.cache.reuse.detail" {
+        if update.phaseDetail == "scan.cache.hit.detail"
+            || update.phaseDetail == "scan.cache.reuse.detail"
+            || update.phaseDetail == "scan.finalize.groups.detail" {
             phaseProgress = update.phaseDetail.localized
         } else if update.phaseDetail.contains("/") || update.phaseDetail.isEmpty
                     || update.phaseDetail.contains("cache") || update.phaseDetail.contains("hits")
                     || update.phaseDetail.contains("·") {
             phaseProgress = update.phaseDetail
         } else if let n = Int(update.phaseDetail) {
-            phaseProgress = "scan.phase.sorting.detail".localized(n)
+            // During finalize, n is group count; during prepare it is file count.
+            if update.message == "scan.finalize.groups" || update.message == "scan.finalize.persist" {
+                phaseProgress = "scan.finalize.groups.count".localized(n)
+            } else {
+                phaseProgress = "scan.phase.sorting.detail".localized(n)
+            }
         } else {
             phaseProgress = update.phaseDetail
         }

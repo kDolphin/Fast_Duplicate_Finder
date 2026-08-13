@@ -354,8 +354,8 @@ actor ScanPipeline {
         
         await progress(.init(
             phase: "scan.phase.finalizing",
-            message: "scan.finalizing",
-            phaseDetail: "\(doneCandidates)",
+            message: "scan.finalize.groups",
+            phaseDetail: "scan.finalize.groups.detail",
             percent: 0.93,
             estimatedRemaining: 0,
             stats: stats
@@ -364,11 +364,21 @@ actor ScanPipeline {
         // same-size candidate counts for review heuristics
         let sizeBucketCounts = Dictionary(uniqueKeysWithValues: multiSize.map { ($0.key, $0.value.count) })
         
-        // Silent package content sentinels for tree-hash collisions (user-invisible)
-        finalGroups = splitPackageGroupsWithSentinels(finalGroups)
+        // Local packages only: silent content sentinels for tree-hash collisions.
+        // On NAS, re-walking packages is multi-minute SMB latency at ~0% CPU — skip and soft-review.
+        if !networkScan {
+            finalGroups = splitPackageGroupsWithSentinels(finalGroups)
+        }
         
         var groups: [DuplicateGroup] = []
+        groups.reserveCapacity(min(finalGroups.count, candidates.count / 2 + 1))
+        var groupBucketsDone = 0
+        let groupBucketTotal = max(finalGroups.count, 1)
+        var lastFinalizeProgress = Date.distantPast
         for (hash, files) in finalGroups {
+            groupBucketsDone += 1
+            // Singles cannot form a duplicate group — skip before extra work.
+            guard files.count > 1 else { continue }
             let uniq = pathDedupe(files)
             guard uniq.count > 1 else { continue }
             let sorted = sortForKeepPreference(uniq)
@@ -405,6 +415,21 @@ actor ScanPipeline {
                 isVerified: verified,
                 packageIdentityMismatch: identityMismatch
             ))
+            
+            let now = Date()
+            if now.timeIntervalSince(lastFinalizeProgress) >= 0.2 {
+                lastFinalizeProgress = now
+                let frac = Double(groupBucketsDone) / Double(groupBucketTotal)
+                await progress(.init(
+                    phase: "scan.phase.finalizing",
+                    message: "scan.finalize.groups",
+                    phaseDetail: "\(groups.count)",
+                    percent: 0.93 + 0.03 * min(1, frac),
+                    estimatedRemaining: 0,
+                    stats: stats
+                ))
+                await Task.yield()
+            }
         }
         groups.sort { $0.duplicateSize > $1.duplicateSize }
         
@@ -416,9 +441,9 @@ actor ScanPipeline {
         
         await progress(.init(
             phase: "scan.phase.finalizing",
-            message: "scan.finalizing",
+            message: "scan.finalize.persist",
             phaseDetail: "\(groups.count)",
-            percent: 0.96,
+            percent: 0.97,
             estimatedRemaining: 0,
             stats: stats
         ))
@@ -451,13 +476,14 @@ actor ScanPipeline {
         if cacheDirty {
             cache.cleanObsoleteEntries(currentFiles: unique, scanPaths: scanRoots)
             cache.lastScanDate = Date()
-            ScanCacheManager.shared.saveCache(cache)
+            // Memory hot-cache updates immediately; disk write is async so UI is not
+            // blocked on encoding a 10MB+ plist after a large NAS scan.
+            ScanCacheManager.shared.saveCache(cache, syncDisk: false)
         }
         
-        // Only complete scans may publish a result snapshot (same roots + file list → reuse).
-        ScanSnapshotStore.save(
-            ScanResultSnapshot.build(roots: scanRoots, files: unique, groups: groups, mode: mode)
-        )
+        // Snapshot: hot path for next identical scan; disk write also async.
+        let snapshot = ScanResultSnapshot.build(roots: scanRoots, files: unique, groups: groups, mode: mode)
+        ScanSnapshotStore.save(snapshot, syncDisk: false)
         
         stats.processedFiles = unique.count
         timing.finalize = Date().timeIntervalSince(finalizeStart)
