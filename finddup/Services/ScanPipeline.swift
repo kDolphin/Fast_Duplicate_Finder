@@ -4,13 +4,23 @@ import Foundation
 actor ScanPipeline {
     
     private var cancelled = false
+    /// Bumps on each start/cancel so an in-flight run cannot be "un-cancelled" by reset().
+    private var runGeneration: UInt64 = 0
+    private var activeGeneration: UInt64 = 0
     
     func cancel() {
         cancelled = true
+        runGeneration &+= 1
     }
     
     func reset() {
-        cancelled = false
+        // Do not clear `cancelled` here — a new `findDuplicates` owns that.
+        // Clearing mid-flight let a cancelled scan resume and write a bad snapshot.
+        runGeneration &+= 1
+    }
+    
+    private var isCancelled: Bool {
+        cancelled || activeGeneration != runGeneration
     }
     
     func findDuplicates(
@@ -19,6 +29,8 @@ actor ScanPipeline {
         mode: ScanMode,
         progress: @Sendable (ScanProgressUpdate) async -> Void
     ) async -> (groups: [DuplicateGroup], stats: ScanStatisticsSnapshot, timing: ScanTimingBreakdown) {
+        runGeneration &+= 1
+        activeGeneration = runGeneration
         cancelled = false
         let started = Date()
         var stats = ScanStatisticsSnapshot()
@@ -30,7 +42,7 @@ actor ScanPipeline {
         stats.totalFiles = unique.count
         stats.totalSize = unique.reduce(0) { $0 + $1.size }
         
-        guard !cancelled else {
+        guard !isCancelled else {
             timing.total = Date().timeIntervalSince(started)
             return ([], stats, timing)
         }
@@ -194,7 +206,7 @@ actor ScanPipeline {
                 let chunkSize = max(concurrency * 4, 8)
                 var i = 0
                 while i < needHashAll.count {
-                    if cancelled { break }
+                    if isCancelled { break }
                     let end = min(i + chunkSize, needHashAll.count)
                     let slice = Array(needHashAll[i..<end])
                     i = end
@@ -223,7 +235,7 @@ actor ScanPipeline {
                     let chunkSize = max(concurrency * 4, 16)
                     var i = 0
                     while i < small.count {
-                        if cancelled { break }
+                        if isCancelled { break }
                         let end = min(i + chunkSize, small.count)
                         let slice = Array(small[i..<end])
                         i = end
@@ -260,7 +272,7 @@ actor ScanPipeline {
                         ($0.first?.pathKey ?? "") < ($1.first?.pathKey ?? "")
                     }
                     for groupFiles in orderedGroups {
-                        if cancelled { break }
+                        if isCancelled { break }
                         let ordered = groupFiles.sorted { $0.pathKey < $1.pathKey }
                         let finals = await hashFiles(ordered, mode: finalHashMode, concurrency: concurrency)
                         for (file, hash) in finals {
@@ -282,6 +294,20 @@ actor ScanPipeline {
                 }
             }
             await reportHashProgress(force: true)
+        }
+        
+        timing.hashing = Date().timeIntervalSince(hashStart)
+        
+        // Cancelled mid-hash: keep partial per-file hash cache (resume speed) but never
+        // publish incomplete groups or a result snapshot — that made the next scan
+        // short-circuit with wrong/incomplete results.
+        if isCancelled {
+            if cacheDirty {
+                cache.lastScanDate = Date()
+                ScanCacheManager.shared.saveCache(cache)
+            }
+            timing.total = Date().timeIntervalSince(started)
+            return ([], stats, timing)
         }
         
         doneCandidates = candidates.count
@@ -334,7 +360,6 @@ actor ScanPipeline {
         }
         groups.sort { $0.duplicateSize > $1.duplicateSize }
         
-        timing.hashing = Date().timeIntervalSince(hashStart)
         if stats.newFiles == 0 && stats.cachedFiles > 0 {
             timing.path = .hashCacheOnly
         } else {
@@ -382,6 +407,7 @@ actor ScanPipeline {
             ScanCacheManager.shared.saveCache(cache)
         }
         
+        // Only complete scans may publish a result snapshot (same roots + file list → reuse).
         ScanSnapshotStore.save(
             ScanResultSnapshot.build(roots: scanRoots, files: unique, groups: groups, mode: mode)
         )
@@ -478,7 +504,7 @@ actor ScanPipeline {
         await withTaskGroup(of: (Int, FileInfo, String?).self) { group in
             func enqueue() {
                 while next < files.count && inFlight < concurrency {
-                    if cancelled { return }
+                    if isCancelled { return }
                     let i = next
                     let file = files[i]
                     next += 1
@@ -507,7 +533,7 @@ actor ScanPipeline {
             for await item in group {
                 inFlight -= 1
                 results.append(item)
-                if !cancelled { enqueue() }
+                if !isCancelled { enqueue() }
             }
         }
         

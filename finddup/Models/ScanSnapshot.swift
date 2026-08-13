@@ -152,18 +152,22 @@ struct ScanResultSnapshot: Codable, Sendable {
 }
 
 enum ScanSnapshotStore {
+    /// v2: only complete scans publish snapshots. v1 files may contain incomplete
+    /// groups written after cancel and are intentionally ignored.
+    private static let fileName = "last_scan_snapshot_v2.plist"
+    
     /// Prefer Application Support (not purged like Caches).
     private static var fileURLs: [URL] {
         var urls: [URL] = []
         if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             let dir = appSupport.appendingPathComponent("finddup", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            urls.append(dir.appendingPathComponent("last_scan_snapshot.plist"))
+            urls.append(dir.appendingPathComponent(fileName))
         }
         if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
             let dir = caches.appendingPathComponent("finddup", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            urls.append(dir.appendingPathComponent("last_scan_snapshot.plist"))
+            urls.append(dir.appendingPathComponent(fileName))
         }
         return urls
     }
