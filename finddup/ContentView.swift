@@ -10,6 +10,8 @@ struct ContentView: View {
     @State private var groupExpandState = GroupExpandState()
     @State private var showingDeletePreview = false
     @State private var filesToDelete: Set<URL> = []
+    /// Active cleanup batch (filter-scoped). Preview / confirm only act on this set.
+    @State private var cleanupSelection: Set<URL> = []
     @State private var isDeleting = false
     @State private var deleteResult: DeleteResult?
     @State private var showingDeleteResult = false
@@ -62,11 +64,11 @@ struct ContentView: View {
                         duplicateGroups: duplicateFinder.duplicateGroups,
                         expandState: $groupExpandState,
                         selectedForDelete: $filesToDelete,
-                        onDeletePreview: {
+                        onDeletePreview: { scopedSelection in
                             if autoDeleteDuplicates {
-                                prepareAutoDelete()
+                                prepareAutoDelete(selection: scopedSelection)
                             } else {
-                                prepareDeletePreview()
+                                prepareDeletePreview(selection: scopedSelection)
                             }
                         },
                         onDeleteFile: deleteFile,
@@ -103,7 +105,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingDeletePreview) {
             DeletePreviewSheet(
                 duplicateGroups: duplicateFinder.duplicateGroups,
-                filesToDelete: $filesToDelete,
+                filesToDelete: $cleanupSelection,
                 onConfirm: { moveToTrash in
                     confirmDeletion(moveToTrash: moveToTrash)
                 }
@@ -203,15 +205,17 @@ struct ContentView: View {
     }
     
     // MARK: - 删除相关方法
-    private func prepareAutoDelete() {
-        // Use current user selection (already seeded / edited in the list)
-        guard !filesToDelete.isEmpty else { return }
+    /// - Parameter selection: filter-scoped marks from ResultsView (not the full global set).
+    private func prepareAutoDelete(selection: Set<URL>) {
+        cleanupSelection = selection
+        guard !cleanupSelection.isEmpty else { return }
         if gateBulkDeleteWarnings() { return }
         deleteSelectedFiles(moveToTrash: moveToTrash)
     }
     
-    private func prepareDeletePreview() {
-        guard !filesToDelete.isEmpty else { return }
+    private func prepareDeletePreview(selection: Set<URL>) {
+        cleanupSelection = selection
+        guard !cleanupSelection.isEmpty else { return }
         if gateBulkDeleteWarnings() { return }
         proceedDeletePreview()
     }
@@ -219,19 +223,18 @@ struct ContentView: View {
     /// Returns true if a warning sheet was presented (caller should stop).
     @discardableResult
     private func gateBulkDeleteWarnings() -> Bool {
-        // Only warn about identity-mismatch if user actually marked some of those packages
+        // Warnings only for items in the active cleanup batch (current filter).
         let markedIdentity = duplicateFinder.duplicateGroups.contains { group in
             group.packageIdentityMismatch &&
-            group.files.contains { filesToDelete.contains($0.url) }
+            group.files.contains { cleanupSelection.contains($0.url) }
         }
         if markedIdentity {
             showingPackageIdentityBeforeDelete = true
             return true
         }
-        // Unverified sampling matches among marked files
         let markedNeedsReview = duplicateFinder.duplicateGroups.contains { group in
             group.needsReview && !group.isVerified && !group.packageIdentityMismatch &&
-            group.files.contains { filesToDelete.contains($0.url) }
+            group.files.contains { cleanupSelection.contains($0.url) }
         }
         if markedNeedsReview {
             showingReviewBeforeDelete = true
@@ -241,6 +244,7 @@ struct ContentView: View {
     }
     
     private func proceedDeletePreview() {
+        guard !cleanupSelection.isEmpty else { return }
         if confirmBeforeDelete {
             showingDeletePreview = true
         } else {
@@ -268,14 +272,16 @@ struct ContentView: View {
     
     private func deleteSelectedFiles(moveToTrash: Bool) {
         isDeleting = true
+        let batch = cleanupSelection
         
         Task {
             var successCount = 0
             var failureCount = 0
             var permissionDenied = false
             var deniedPath = ""
+            var deleted: [URL] = []
             
-            for fileURL in filesToDelete {
+            for fileURL in batch {
                 do {
                     // 智能删除：网络文件直接删除，本地文件根据选择处理
                     if moveToTrash && !isNetworkVolume(fileURL) {
@@ -284,6 +290,7 @@ struct ContentView: View {
                         try FileManager.default.removeItem(at: fileURL)
                     }
                     successCount += 1
+                    deleted.append(fileURL)
                 } catch CocoaError.fileWriteFileExists {
                     failureCount += 1
                 } catch CocoaError.fileReadNoPermission, CocoaError.fileWriteNoPermission {
@@ -304,6 +311,10 @@ struct ContentView: View {
                     isDeleting = false
                     showingPermissionAlert = true
                 } else {
+                    for url in deleted {
+                        filesToDelete.remove(url)
+                    }
+                    cleanupSelection.removeAll()
                     deleteResult = DeleteResult(successCount: successCount, failureCount: failureCount)
                     isDeleting = false
                     showingDeleteResult = true

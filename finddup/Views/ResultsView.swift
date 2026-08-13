@@ -24,7 +24,8 @@ struct ResultsView: View {
     let duplicateGroups: [DuplicateGroup]
     @Binding var expandState: GroupExpandState
     @Binding var selectedForDelete: Set<URL>
-    let onDeletePreview: () -> Void
+    /// Invoked with the selection restricted to the current filter (and search).
+    let onDeletePreview: (Set<URL>) -> Void
     let onDeleteFile: (FileInfo) -> Void
     let onVerifyGroup: (UUID) -> Void
     let onVerifyAllReview: () -> Void
@@ -88,12 +89,29 @@ struct ResultsView: View {
         expandState.isFullyExpanded
     }
     
+    /// URLs belonging to groups in the current filter (+ search). Cleanup uses this scope only.
+    private var urlsInFilteredGroups: Set<URL> {
+        var urls = Set<URL>()
+        urls.reserveCapacity(filteredGroups.count * 2)
+        for group in filteredGroups {
+            for file in group.files {
+                urls.insert(file.url)
+            }
+        }
+        return urls
+    }
+    
+    /// Marks that fall inside the current filter — drives the Clean Up button count and action.
+    private var filteredSelectedForDelete: Set<URL> {
+        selectedForDelete.intersection(urlsInFilteredGroups)
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             if embedsTopBar {
                 ResultsChromeBar(
-                    groupCount: duplicateGroups.count,
-                    selectedCount: selectedForDelete.count,
+                    groupCount: filteredGroups.count,
+                    selectedCount: filteredSelectedForDelete.count,
                     filter: $filter,
                     searchText: $searchText,
                     reviewCount: reviewCount,
@@ -102,7 +120,10 @@ struct ResultsView: View {
                     allExpanded: allFilteredExpanded,
                     onToggleAll: toggleAllFiltered,
                     onApplyKeepSuggestions: applyKeepSuggestionsToFiltered,
-                    onDeletePreview: onDeletePreview,
+                    onDeletePreview: {
+                        // Only clean items visible under the active filter / search.
+                        onDeletePreview(filteredSelectedForDelete)
+                    },
                     onVerifyAllReview: onVerifyAllReview,
                     onOpenSettings: onOpenSettings
                 )

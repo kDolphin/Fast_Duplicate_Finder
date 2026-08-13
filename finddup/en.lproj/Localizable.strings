@@ -80,7 +80,7 @@
 "results.package.badge" = "Package";
 "results.cleanup" = "Clean Up";
 "results.cleanup.count" = "Clean Up (%d)";
-"results.cleanup.help" = "Remove items you checked in the list";
+"results.cleanup.help" = "Remove checked items in the current filter (All / Needs review / Packages). Marks outside this filter are left alone.";
 "results.keep.suggest" = "Suggested keep";
 "results.recommended.keep" = "Suggested keep";
 "results.will.delete" = "Will delete";

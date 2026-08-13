@@ -80,7 +80,7 @@
 "results.package.badge" = "整包";
 "results.cleanup" = "清理";
 "results.cleanup.count" = "清理 (%d)";
-"results.cleanup.help" = "清理列表中已勾选的项";
+"results.cleanup.help" = "仅清理当前筛选（全部 / 需复核 / 整包）下已勾选的项；其他筛选中的勾选会保留。";
 "results.keep.suggest" = "建议保留";
 "results.recommended.keep" = "建议保留";
 "results.will.delete" = "将删除";
