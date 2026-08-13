@@ -347,12 +347,21 @@ class ScanCacheManager {
         hotLock.unlock()
         if syncDisk {
             persistCacheToDisk(cache)
+            notifyDidChange()
         } else {
             let url = cacheFileURL
             let binary = useBinaryFormat
             Task.detached(priority: .utility) {
                 Self.writeCacheFile(cache, to: url, binary: binary)
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: ScanCacheManager.didChangeNotification,
+                        object: ScanCacheManager.shared
+                    )
+                }
             }
+            // UI can refresh from hot cache immediately (disk write still in flight).
+            notifyDidChange()
         }
     }
     
@@ -391,15 +400,31 @@ class ScanCacheManager {
         }
     }
     
+    /// Posted on the main queue after cache contents change (save / clear).
+    static let didChangeNotification = Notification.Name("ScanCacheManager.didChange")
+    
+    private func notifyDidChange() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+        }
+    }
+    
     func clearCache() {
+        // Keep an empty hot cache so loadCache() does not resurrect a stale in-memory copy.
         hotLock.lock()
-        hotCache = nil
+        hotCache = ScanCache()
         hotLock.unlock()
         #if DEBUG
         print("🗑️ Clearing cache file: \(cacheFileURL.path)")
         #endif
         do {
-            try FileManager.default.removeItem(at: cacheFileURL)
+            if FileManager.default.fileExists(atPath: cacheFileURL.path) {
+                try FileManager.default.removeItem(at: cacheFileURL)
+            }
+            let tmp = cacheFileURL.appendingPathExtension("tmp")
+            if FileManager.default.fileExists(atPath: tmp.path) {
+                try? FileManager.default.removeItem(at: tmp)
+            }
             #if DEBUG
             print("✅ Cache cleared successfully")
             #endif
@@ -408,6 +433,7 @@ class ScanCacheManager {
             print("❌ Failed to clear cache: \(error)")
             #endif
         }
+        notifyDidChange()
     }
     
     /// 缓存健康检查和维护
@@ -488,19 +514,8 @@ class ScanCacheManager {
         return cacheFileURL
     }
     
-    /// 清除缓存
-    func clearCache() async {
-        do {
-            if FileManager.default.fileExists(atPath: cacheFileURL.path) {
-                try FileManager.default.removeItem(at: cacheFileURL)
-                #if DEBUG
-                print("🗑️ Cache cleared successfully")
-                #endif
-            }
-        } catch {
-            #if DEBUG
-            print("❌ Failed to clear cache: \(error)")
-            #endif
-        }
+    /// Live stats from the in-memory cache (falls back to disk load).
+    func currentCacheStats() -> (totalEntries: Int, estimatedSize: Int64, oldestEntry: Date?, newestEntry: Date?) {
+        loadCache().getCacheStats()
     }
 }

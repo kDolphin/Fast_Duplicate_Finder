@@ -477,6 +477,10 @@ struct CacheManagementSection: View {
         .onAppear {
             loadCacheInfo()
         }
+        // Scan / clear update memory + disk without leaving Settings — refresh live.
+        .onReceive(NotificationCenter.default.publisher(for: ScanCacheManager.didChangeNotification)) { _ in
+            loadCacheInfo()
+        }
         .alert("settings.cache.clear.confirm.title".localized, isPresented: $showingClearConfirmation) {
             Button("settings.cache.clear.confirm.clear".localized, role: .destructive) {
                 clearCache()
@@ -489,23 +493,16 @@ struct CacheManagementSection: View {
     
     private func loadCacheInfo() {
         let cacheManager = ScanCacheManager.shared
-        let cache = cacheManager.loadCache()
-        cacheStats = cache.getCacheStats()
+        cacheStats = cacheManager.currentCacheStats()
         cacheLocation = cacheManager.getCacheFileURL().path
     }
     
     private func clearCache() {
         isClearing = true
-        
-        Task {
-            let cacheManager = ScanCacheManager.shared
-            await cacheManager.clearCache()
-            ScanSnapshotStore.clear()
-            
-            await MainActor.run {
-                loadCacheInfo()
-                isClearing = false
-            }
-        }
+        // Synchronous clear: empties hot cache + deletes file, posts didChange.
+        ScanCacheManager.shared.clearCache()
+        ScanSnapshotStore.clear()
+        loadCacheInfo()
+        isClearing = false
     }
 }
