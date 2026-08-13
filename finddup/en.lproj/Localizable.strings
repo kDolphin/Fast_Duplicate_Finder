@@ -48,6 +48,10 @@
 "scan.files.network.detail" = "%@ · %d items · %d files";
 "scan.files.visited" = "%d items · %d files";
 "scan.cache.processing" = "Processing cache…";
+"scan.prepare.signature" = "Fingerprinting file list…";
+"scan.prepare.snapshot" = "Checking previous results…";
+"scan.prepare.cache" = "Loading hash cache…";
+"scan.prepare.match" = "Matching against cache…";
 "scan.cache.hit" = "Unchanged since last scan — reusing results";
 "scan.cache.hit.detail" = "Skipped re-hashing (file list signature match)";
 "scan.cache.reuse.detail" = "All candidates served from disk cache";

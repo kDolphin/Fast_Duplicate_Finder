@@ -49,9 +49,9 @@ actor ScanPipeline {
         
         await progress(.init(
             phase: "scan.phase.processing",
-            message: "scan.cache.processing",
+            message: "scan.prepare.signature",
             phaseDetail: "\(unique.count)",
-            percent: 0.48,
+            percent: 0.46,
             estimatedRemaining: 0,
             stats: stats
         ))
@@ -59,6 +59,16 @@ actor ScanPipeline {
         // Snapshot short-circuit (mode-aware)
         let rootKeys = ScanResultSnapshot.rootKeys(from: scanRoots)
         let signature = ScanResultSnapshot.listSignature(for: unique)
+        
+        await progress(.init(
+            phase: "scan.phase.processing",
+            message: "scan.prepare.snapshot",
+            phaseDetail: "\(unique.count)",
+            percent: 0.48,
+            estimatedRemaining: 0,
+            stats: stats
+        ))
+        
         if let snap = ScanSnapshotStore.load(),
            snap.matches(roots: rootKeys, signature: signature, mode: mode),
            let reused = snap.materialize(using: unique) {
@@ -119,21 +129,25 @@ actor ScanPipeline {
         
         await progress(.init(
             phase: "scan.phase.processing",
-            message: "scan.cache.processing",
+            message: "scan.prepare.cache",
             phaseDetail: "\(candidates.count) candidates · \(singletonCount) unique-by-size",
             percent: 0.50,
             estimatedRemaining: 0,
             stats: stats
         ))
         
+        // Keys normalized once on disk load; subsequent scans use in-memory hot cache.
         var cache = ScanCacheManager.shared.loadCache()
-        var normalized: [String: CachedFileInfo] = [:]
-        normalized.reserveCapacity(cache.cachedFiles.count)
-        for (key, value) in cache.cachedFiles {
-            guard ContentHasher.isFinalHash(value.hash, for: mode) else { continue }
-            normalized[key.standardizedPath] = value
-        }
-        cache.cachedFiles = normalized
+        
+        await progress(.init(
+            phase: "scan.phase.processing",
+            message: "scan.prepare.match",
+            phaseDetail: "\(candidates.count) candidates · \(cache.cachedFiles.count) cached",
+            percent: 0.51,
+            estimatedRemaining: 0,
+            stats: stats
+        ))
+        
         timing.prepare = Date().timeIntervalSince(prepareStart)
         
         let hashStart = Date()
@@ -147,10 +161,11 @@ actor ScanPipeline {
         // Partition cache hits vs misses across all size buckets first
         var needHashAll: [FileInfo] = []
         needHashAll.reserveCapacity(candidates.count)
+        let cacheMap = cache.cachedFiles
         for bucket in multiSize.values {
             for file in bucket {
                 let key = file.pathKey
-                if let cached = cache.cachedFiles[key],
+                if let cached = cacheMap[key],
                    ContentHasher.isFinalHash(cached.hash, for: mode),
                    !cached.hasChanged(comparedTo: file) {
                     finalGroups[cached.hash, default: []].append(file)

@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// Full-scan result snapshot: if the same roots yield the same file list
 /// (path + size + mtime seconds), reuse groups without re-hashing.
@@ -57,34 +56,51 @@ struct ScanResultSnapshot: Codable, Sendable {
     }
     
     /// Order-independent signature (no full-list sort). Whole-second mtimes.
-    /// XOR of per-file digests + count/totalSize so reordering does not change the result.
+    /// Dual xxHash64 XOR + count/totalSize — fast enough for 100k+ NAS lists
+    /// (SHA256-per-file used to stall the UI for minutes on “Processing cache…”).
     static func listSignature(for files: [FileInfo]) -> String {
-        var xor = [UInt8](repeating: 0, count: 32)
+        var xor0: UInt64 = 0
+        var xor1: UInt64 = 0
         var totalSize: Int64 = 0
         for f in files {
             totalSize += f.size
-            var h = SHA256()
             let sec = Int64(f.modificationDate.timeIntervalSince1970)
-            var line = f.pathKey
-            line += "|"
-            line += String(f.size)
-            line += "|"
-            line += String(sec)
-            if let data = line.data(using: .utf8) {
-                h.update(data: data)
+            // Mix path|size|mtime without allocating a joined String each time.
+            var h0 = XXHash64(seed: 0x9E37_79B1_85EB_CA87)
+            var h1 = XXHash64(seed: 0xC2B2_AE3D_27D4_EB4F)
+            if let pathData = f.pathKey.data(using: .utf8) {
+                h0.update(pathData)
+                h1.update(pathData)
             }
-            let digest = h.finalize()
-            var i = 0
-            for b in digest {
-                xor[i] ^= b
-                i += 1
+            var sizeBE = f.size.bigEndian
+            var secBE = sec.bigEndian
+            withUnsafeBytes(of: &sizeBE) { raw in
+                h0.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+                h1.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
             }
+            withUnsafeBytes(of: &secBE) { raw in
+                h0.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+                h1.update(bytes: raw.bindMemory(to: UInt8.self).baseAddress!, count: raw.count)
+            }
+            xor0 ^= h0.digest()
+            xor1 ^= h1.digest()
         }
-        var outer = SHA256()
-        withUnsafeBytes(of: Int64(files.count).bigEndian) { outer.update(bufferPointer: $0) }
-        withUnsafeBytes(of: totalSize.bigEndian) { outer.update(bufferPointer: $0) }
-        outer.update(data: Data(xor))
-        return outer.finalize().map { String(format: "%02x", $0) }.joined()
+        // Domain-separate list cardinality / payload size so empty vs non-empty differ.
+        var outer0 = XXHash64(seed: 0x4F1B_BCDC_BFA5_853D)
+        var outer1 = XXHash64(seed: 0x27D4_EB2F_1656_67C5)
+        var countBE = Int64(files.count).bigEndian
+        var totalBE = totalSize.bigEndian
+        var x0 = xor0.bigEndian
+        var x1 = xor1.bigEndian
+        withUnsafeBytes(of: &countBE) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &totalBE) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x0) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x1) { outer0.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &countBE) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &totalBE) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x0) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        withUnsafeBytes(of: &x1) { outer1.update(bytes: $0.bindMemory(to: UInt8.self).baseAddress!, count: $0.count) }
+        return String(format: "ls2:%016llx%016llx", outer0.digest(), outer1.digest())
     }
     
     static func build(

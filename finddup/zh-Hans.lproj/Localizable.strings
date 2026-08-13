@@ -48,6 +48,10 @@
 "scan.files.network.detail" = "%@ · %d 项 · %d 个文件";
 "scan.files.visited" = "%d 项 · %d 个文件";
 "scan.cache.processing" = "正在处理缓存…";
+"scan.prepare.signature" = "正在计算文件列表指纹…";
+"scan.prepare.snapshot" = "正在检查上次结果…";
+"scan.prepare.cache" = "正在加载哈希缓存…";
+"scan.prepare.match" = "正在匹配缓存…";
 "scan.cache.hit" = "与上次扫描一致 — 复用结果";
 "scan.cache.hit.detail" = "文件列表未变，已跳过重新哈希";
 "scan.cache.reuse.detail" = "候选均来自磁盘缓存";

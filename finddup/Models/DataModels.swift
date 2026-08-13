@@ -12,6 +12,8 @@ struct FileInfo: Identifiable, Hashable, Sendable {
     let isPackage: Bool
     /// Precomputed fingerprint (package tree hash `pkg:…`); nil for regular files
     let precomputedHash: String?
+    /// Cached once — `standardizedPath` is hot on large NAS scans (100k+ items).
+    let pathKey: String
     
     init(
         url: URL,
@@ -28,10 +30,7 @@ struct FileInfo: Identifiable, Hashable, Sendable {
         self.creationDate = creationDate
         self.isPackage = isPackage
         self.precomputedHash = precomputedHash
-    }
-    
-    var pathKey: String {
-        url.path.standardizedPath
+        self.pathKey = url.path.standardizedPath
     }
     
     func hash(into hasher: inout Hasher) {

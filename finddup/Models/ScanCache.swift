@@ -159,6 +159,9 @@ class ScanCacheManager {
     
     private let cacheFileURL: URL
     private let useBinaryFormat = true  // 使用二进制格式
+    /// Avoid re-decoding a multi‑MB plist on every scan (hot path for large NAS libraries).
+    private var hotCache: ScanCache?
+    private let hotLock = NSLock()
     
     init() {
         // 获取应用信息用于调试
@@ -233,16 +236,48 @@ class ScanCacheManager {
     }
     
     func loadCache() -> ScanCache {
-        if let cache = loadCacheFromURL(cacheFileURL) {
-            return cache
+        hotLock.lock()
+        if let hotCache {
+            let copy = hotCache
+            hotLock.unlock()
+            return copy
         }
-        for cachePath in getPossibleCachePaths() {
-            if let cache = loadCacheFromURL(cachePath) {
-                saveCache(cache)
-                return cache
+        hotLock.unlock()
+        
+        var loaded: ScanCache
+        if let cache = loadCacheFromURL(cacheFileURL) {
+            loaded = cache
+        } else {
+            loaded = ScanCache()
+            for cachePath in getPossibleCachePaths() {
+                if let cache = loadCacheFromURL(cachePath) {
+                    loaded = cache
+                    break
+                }
             }
         }
-        return ScanCache()
+        // Normalize keys once on disk load (path canonicalization).
+        if !loaded.cachedFiles.isEmpty {
+            var normalized: [String: CachedFileInfo] = [:]
+            normalized.reserveCapacity(loaded.cachedFiles.count)
+            for (key, value) in loaded.cachedFiles {
+                let k = key.standardizedPath
+                if ContentHasher.isFinalHash(value.hash) {
+                    normalized[k] = value
+                }
+            }
+            loaded.cachedFiles = normalized
+        }
+        
+        hotLock.lock()
+        hotCache = loaded
+        hotLock.unlock()
+        
+        // Persist migrated location if we found a legacy path only
+        if !FileManager.default.fileExists(atPath: cacheFileURL.path), !loaded.cachedFiles.isEmpty {
+            saveCache(loaded)
+        }
+        return loaded
     }
     
     private func loadCacheFromURL(_ url: URL) -> ScanCache? {
@@ -304,6 +339,9 @@ class ScanCacheManager {
     }
     
     func saveCache(_ cache: ScanCache) {
+        hotLock.lock()
+        hotCache = cache
+        hotLock.unlock()
         do {
             let data: Data
             if useBinaryFormat {
@@ -331,6 +369,9 @@ class ScanCacheManager {
     }
     
     func clearCache() {
+        hotLock.lock()
+        hotCache = nil
+        hotLock.unlock()
         #if DEBUG
         print("🗑️ Clearing cache file: \(cacheFileURL.path)")
         #endif
