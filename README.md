@@ -5,7 +5,7 @@
 A native **macOS** app that finds and removes **duplicate files** on local disks and network volumes (NAS) — fast by default, with safety checks before cleanup.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.1-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-1.0.2-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-macOS%2013%2B-blue" alt="platform" />
   <img src="https://img.shields.io/badge/architecture-Apple%20Silicon-green" alt="arch" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license" />
@@ -74,6 +74,13 @@ open finddup.xcodeproj
 Settings: **⌘,** or the gear icon.
 
 ## Changelog
+
+### 1.0.2
+
+- **NAS enumeration** — Parallel first-level subtree listing (concurrency **6**); reuse package metadata to avoid extra SMB RTTs
+- **Large-library prepare / finalize** — Faster list fingerprints, in-memory hash cache, no incomplete snapshot on cancel; group assembly without filesystem path resolution; async cache write
+- **Purpose-risk cleanup UX** — Toolbar **Apply keep suggestions** and per-group **Mark others** (still unchecked by default for safety)
+- **Scan timing** — Breakdown bars sum to wall-clock total; clearer multi-minute duration format
 
 ### 1.0.1
 
