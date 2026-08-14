@@ -25,6 +25,17 @@ struct DeletePreviewSheet: View {
         }
     }
     
+    /// Keep file plus anything in this cleanup batch (search-scoped marks).
+    private func previewFiles(in group: DuplicateGroup) -> [(file: FileInfo, isKeep: Bool)] {
+        group.files.enumerated().compactMap { index, file in
+            let isKeep = index == 0
+            if isKeep || filesToDelete.contains(file.url) {
+                return (file, isKeep)
+            }
+            return nil
+        }
+    }
+    
     private var totalSizeToFree: Int64 {
         var total: Int64 = 0
         for group in duplicateGroups {
@@ -78,13 +89,13 @@ struct DeletePreviewSheet: View {
                                 .foregroundStyle(.secondary)
                             
                             // File list
-                            ForEach(Array(group.files.enumerated()), id: \.offset) { index, file in
+                            ForEach(Array(previewFiles(in: group).enumerated()), id: \.offset) { _, item in
                                 FilePreviewRow(
-                                    file: file,
-                                    isFirst: index == 0,
-                                    isSelected: filesToDelete.contains(file.url),
+                                    file: item.file,
+                                    isFirst: item.isKeep,
+                                    isSelected: filesToDelete.contains(item.file.url),
                                     onToggle: {
-                                        toggleFileSelection(file: file, group: group)
+                                        toggleFileSelection(file: item.file, group: group)
                                     }
                                 )
                             }

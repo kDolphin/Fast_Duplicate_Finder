@@ -58,8 +58,9 @@ struct ResultsView: View {
     }
     
     var body: some View {
-        let groups = visibleGroups(query: appliedSearch)
-        let selectedCount = markedCount(in: groups)
+        let query = appliedSearch
+        let groups = visibleGroups(query: query)
+        let selectedCount = markedCount(in: groups, query: query)
         return VStack(spacing: 0) {
             if embedsTopBar {
                 ResultsChromeBar(
@@ -73,8 +74,11 @@ struct ResultsView: View {
                     allExpanded: allFilteredExpanded,
                     onToggleAll: toggleAllFiltered,
                     onApplyKeepSuggestions: applyKeepSuggestionsToFiltered,
+                    onSearchSubmit: { _ = flushSearch() },
                     onDeletePreview: {
-                        onDeletePreview(markedURLs(in: groups))
+                        let q = flushSearch()
+                        let visible = visibleGroups(query: q)
+                        onDeletePreview(markedURLs(in: visible, query: q))
                     },
                     onVerifyAllReview: onVerifyAllReview,
                     onOpenSettings: onOpenSettings
@@ -84,8 +88,8 @@ struct ResultsView: View {
             VStack(spacing: 10) {
                 ResultsMetricsStrip(
                     groupCount: groups.count,
-                    freeableSize: markedBytes(in: groups),
-                    potentialFreeableSize: groups.reduce(0) { $0 + $1.duplicateSize },
+                    freeableSize: markedBytes(in: groups, query: query),
+                    potentialFreeableSize: potentialBytes(in: groups, query: query),
                     totalFilesScanned: totalFilesScanned,
                     totalScanDuration: totalScanDuration,
                     reviewCount: reviewCount
@@ -165,6 +169,14 @@ struct ResultsView: View {
         )
     }
     
+    @discardableResult
+    private func flushSearch() -> String {
+        searchDebounce?.cancel()
+        let trimmed = searchField.trimmingCharacters(in: .whitespacesAndNewlines)
+        appliedSearch = trimmed
+        return trimmed
+    }
+    
     private func scheduleSearchApply(_ raw: String) {
         searchDebounce?.cancel()
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -205,30 +217,44 @@ struct ResultsView: View {
         return n
     }
     
-    private func markedCount(in groups: [DuplicateGroup]) -> Int {
-        var n = 0
-        for group in groups {
-            for file in group.files where selectedForDelete.contains(file.url) {
-                n += 1
-            }
-        }
-        return n
+    private func fileMatchesSearch(_ file: FileInfo, query: String) -> Bool {
+        query.isEmpty || searchIndex.fileMatches(file, query: query.lowercased())
     }
     
-    private func markedBytes(in groups: [DuplicateGroup]) -> Int64 {
+    private func potentialBytes(in groups: [DuplicateGroup], query: String) -> Int64 {
         var total: Int64 = 0
         for group in groups {
-            for file in group.files where selectedForDelete.contains(file.url) {
+            for (index, file) in group.files.enumerated() where index > 0 && fileMatchesSearch(file, query: query) {
                 total += group.fileSize
             }
         }
         return total
     }
     
-    private func markedURLs(in groups: [DuplicateGroup]) -> Set<URL> {
+    private func markedCount(in groups: [DuplicateGroup], query: String) -> Int {
+        var n = 0
+        for group in groups {
+            for file in group.files where selectedForDelete.contains(file.url) && fileMatchesSearch(file, query: query) {
+                n += 1
+            }
+        }
+        return n
+    }
+    
+    private func markedBytes(in groups: [DuplicateGroup], query: String) -> Int64 {
+        var total: Int64 = 0
+        for group in groups {
+            for file in group.files where selectedForDelete.contains(file.url) && fileMatchesSearch(file, query: query) {
+                total += group.fileSize
+            }
+        }
+        return total
+    }
+    
+    private func markedURLs(in groups: [DuplicateGroup], query: String) -> Set<URL> {
         var urls = Set<URL>()
         for group in groups {
-            for file in group.files where selectedForDelete.contains(file.url) {
+            for file in group.files where selectedForDelete.contains(file.url) && fileMatchesSearch(file, query: query) {
                 urls.insert(file.url)
             }
         }
@@ -290,7 +316,11 @@ private final class GroupSearchIndex: ObservableObject {
         if let haystack = haystacks[group.id] {
             return haystack.contains(query)
         }
-        return group.files.contains { $0.url.path.lowercased().contains(query) }
+        return group.files.contains { fileMatches($0, query: query) }
+    }
+    
+    func fileMatches(_ file: FileInfo, query: String) -> Bool {
+        file.url.path.lowercased().contains(query)
     }
 }
 
@@ -318,6 +348,7 @@ struct ResultsChromeBar: View {
     let allExpanded: Bool
     let onToggleAll: () -> Void
     var onApplyKeepSuggestions: (() -> Void)? = nil
+    var onSearchSubmit: (() -> Void)? = nil
     let onDeletePreview: () -> Void
     let onVerifyAllReview: () -> Void
     var onOpenSettings: (() -> Void)? = nil
@@ -361,6 +392,7 @@ struct ResultsChromeBar: View {
                 TextField("results.search.placeholder".localized, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.callout)
+                    .onSubmit { onSearchSubmit?() }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
