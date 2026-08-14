@@ -6,7 +6,7 @@
 "sidebar.locations" = "Locations";
 "sidebar.scanning.scope" = "This scan";
 "sidebar.select.folder" = "Add folders to scan";
-"sidebar.drop.hint" = "Choose one or more folders";
+"sidebar.drop.hint" = "Drop folders here, or click to choose";
 "sidebar.scan.need.folder" = "Add a folder to enable scan";
 "sidebar.start.scan" = "Start Scan";
 "sidebar.stop.scan" = "Stop";
@@ -71,6 +71,8 @@
 /* Results */
 "results.no.duplicates" = "No duplicates found";
 "results.all.unique" = "No duplicate groups in the selected folders";
+"results.scan.cancelled.title" = "Scan cancelled";
+"results.scan.cancelled.message" = "No results were published. Partial hashes are kept for the next run.";
 "results.expand.all" = "Expand all";
 "results.collapse.all" = "Collapse all";
 "results.move.to.trash" = "Move to Trash";
@@ -138,7 +140,7 @@
 "delete.preview.title" = "Delete Preview";
 "delete.preview.message" = "Will delete %d items, freeing %@";
 "delete.preview.group" = "Group %d · %@";
-"delete.network.warning" = "Network files may be permanently deleted (cannot use Trash).";
+"delete.network.warning" = "Files on network volumes are always deleted permanently. Local files still follow Trash or Permanent.";
 "delete.package.identity.warning" = "Selection includes same-content items with different purposeful names (wrappers, locale packs, multi-product roles).";
 "delete.file.help" = "Delete this item now";
 
@@ -182,8 +184,8 @@
 "settings.confirm.before.delete.help" = "Show a preview before cleaning";
 "settings.move.to.trash" = "Move to Trash";
 "settings.move.to.trash.help" = "Local files go to Trash; network volumes may delete permanently";
-"settings.auto.delete" = "Auto-clean after scan";
-"settings.auto.delete.help" = "Automatically clean checked items after a scan (use with care)";
+"settings.auto.delete" = "Skip cleanup preview";
+"settings.auto.delete.help" = "Clean Up deletes immediately after safety warnings. Ignored while Confirm before cleanup is on.";
 "settings.min.size" = "Minimum file size";
 "settings.min.size.help" = "Ignore files smaller than this";
 "settings.max.size" = "Maximum file size";

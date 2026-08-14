@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var showingDeleteResult = false
     @State private var showingReviewBeforeDelete = false
     @State private var showingPackageIdentityBeforeDelete = false
+    @State private var didRestoreFolders = false
     
     // 删除设置
     @AppStorage("confirm_before_delete") private var confirmBeforeDelete = true
@@ -65,7 +66,7 @@ struct ContentView: View {
                         expandState: $groupExpandState,
                         selectedForDelete: $filesToDelete,
                         onDeletePreview: { scopedSelection in
-                            if autoDeleteDuplicates {
+                            if autoDeleteDuplicates && !confirmBeforeDelete {
                                 prepareAutoDelete(selection: scopedSelection)
                             } else {
                                 prepareDeletePreview(selection: scopedSelection)
@@ -87,6 +88,10 @@ struct ContentView: View {
                         newlyHashed: duplicateFinder.scanStatistics.newFiles,
                         embedsTopBar: true
                     )
+                } else if duplicateFinder.lastOutcome == .completed {
+                    NoResultsView(cancelled: false)
+                } else if duplicateFinder.lastOutcome == .cancelled {
+                    NoResultsView(cancelled: true)
                 } else if !selectedFolders.isEmpty {
                     FolderInfoView(selectedFolders: $selectedFolders)
                 } else {
@@ -101,6 +106,14 @@ struct ContentView: View {
         }
         .onAppear {
             LocalizationManager.shared.reloadFromSystem()
+            if !didRestoreFolders {
+                didRestoreFolders = true
+                selectedFolders = FolderAccessManager.shared.restoreAndAccess()
+                ScanCacheManager.shared.preloadInBackground()
+            }
+        }
+        .onChange(of: selectedFolders) { newFolders in
+            FolderAccessManager.shared.sync(newFolders)
         }
         .sheet(isPresented: $showingDeletePreview) {
             DeletePreviewSheet(
@@ -254,7 +267,11 @@ struct ContentView: View {
     
     private func deleteFile(_ file: FileInfo) {
         do {
-            try FileManager.default.trashItem(at: file.url, resultingItemURL: nil)
+            if moveToTrash && !VolumeKind.isNetwork(file.url) {
+                try FileManager.default.trashItem(at: file.url, resultingItemURL: nil)
+            } else {
+                try FileManager.default.removeItem(at: file.url)
+            }
             filesToDelete.remove(file.url)
             duplicateFinder.removeDeletedFile(file)
             DeleteSelectionPolicy.prune(&filesToDelete, groups: duplicateFinder.duplicateGroups)
@@ -284,7 +301,7 @@ struct ContentView: View {
             for fileURL in batch {
                 do {
                     // 智能删除：网络文件直接删除，本地文件根据选择处理
-                    if moveToTrash && !isNetworkVolume(fileURL) {
+                    if moveToTrash && !VolumeKind.isNetwork(fileURL) {
                         try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
                     } else {
                         try FileManager.default.removeItem(at: fileURL)
@@ -318,9 +335,9 @@ struct ContentView: View {
                     deleteResult = DeleteResult(successCount: successCount, failureCount: failureCount)
                     isDeleting = false
                     showingDeleteResult = true
-                    // 重新扫描以更新结果
                     if successCount > 0 {
-                        performScan()
+                        duplicateFinder.removeDeletedURLs(Set(deleted))
+                        DeleteSelectionPolicy.prune(&filesToDelete, groups: duplicateFinder.duplicateGroups)
                     }
                 }
             }
@@ -429,15 +446,6 @@ struct ContentView: View {
     private func openSystemPreferences() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
         NSWorkspace.shared.open(url)
-    }
-    
-    private func isNetworkVolume(_ url: URL) -> Bool {
-        do {
-            let resourceValues = try url.resourceValues(forKeys: [.volumeIsLocalKey])
-            return !(resourceValues.volumeIsLocal ?? true)
-        } catch {
-            return false
-        }
     }
     
 }

@@ -103,6 +103,41 @@ struct DuplicateGroup: Identifiable, Sendable {
     }
 }
 
+/// In-memory group edits after cleanup (no rescan).
+enum DuplicateGroupEditing: Sendable {
+    static func removing(_ urls: Set<URL>, from groups: [DuplicateGroup]) -> [DuplicateGroup] {
+        groups.compactMap { group in
+            let remaining = group.files.filter { !urls.contains($0.url) }
+            guard remaining.count >= 2 else { return nil }
+            let sorted = remaining.sorted { $0.pathKey < $1.pathKey }
+            let mismatch = PackageIdentity.hasIdentityMismatch(packages: sorted)
+            let review: Bool
+            let verified: Bool
+            if mismatch {
+                review = true
+                verified = false
+            } else if group.packageIdentityMismatch {
+                review = false
+                verified = group.isVerified
+                    || group.hash.hasPrefix("pkgv:")
+                    || ContentHasher.isPreciseHash(group.hash)
+            } else {
+                review = group.needsReview
+                verified = group.isVerified
+            }
+            return DuplicateGroup(
+                files: sorted,
+                fileSize: group.fileSize,
+                hash: group.hash,
+                needsReview: review,
+                isVerified: verified,
+                packageIdentityMismatch: mismatch,
+                id: group.id
+            )
+        }
+    }
+}
+
 /// Zero-cost heuristics: when turbo sampling might mis-group same-size files.
 enum DuplicateReviewPolicy {
     /// Always suggest review for files this large (sampling finals)

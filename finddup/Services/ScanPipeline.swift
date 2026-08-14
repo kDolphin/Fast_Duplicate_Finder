@@ -696,8 +696,8 @@ actor ScanPipeline {
     
     private func sortForKeepPreference(_ files: [FileInfo]) -> [FileInfo] {
         files.sorted { a, b in
-            let aNet = a.url.path.hasPrefix("/Volumes/")
-            let bNet = b.url.path.hasPrefix("/Volumes/")
+            let aNet = VolumeKind.isNetwork(a.url)
+            let bNet = VolumeKind.isNetwork(b.url)
             if aNet != bNet { return !aNet }
             if a.url.path.count != b.url.path.count {
                 return a.url.path.count < b.url.path.count

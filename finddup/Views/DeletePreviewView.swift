@@ -12,6 +12,12 @@ struct DeletePreviewSheet: View {
         filesToDelete.contains { isNetworkVolume($0) }
     }
     
+    private var markedGroups: [DuplicateGroup] {
+        duplicateGroups.filter { group in
+            group.files.contains { filesToDelete.contains($0.url) }
+        }
+    }
+    
     private var hasPackageIdentityRisk: Bool {
         duplicateGroups.contains { group in
             group.packageIdentityMismatch &&
@@ -43,11 +49,11 @@ struct DeletePreviewSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
-                // 网络文件警告
                 if hasNetworkFiles {
                     Text("delete.network.warning".localized)
                         .font(.caption)
                         .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
                         .padding(.top, 4)
                 }
                 
@@ -65,10 +71,9 @@ struct DeletePreviewSheet: View {
             // 文件列表
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(duplicateGroups) { group in
+                    ForEach(Array(markedGroups.enumerated()), id: \.element.id) { index, group in
                         VStack(alignment: .leading, spacing: 8) {
-                            // 组标题
-                            Text("delete.preview.group".localized(duplicateGroups.firstIndex(where: { $0.id == group.id })! + 1, ByteCountFormatter.string(fromByteCount: group.fileSize, countStyle: .file)))
+                            Text("delete.preview.group".localized(index + 1, ByteCountFormatter.string(fromByteCount: group.fileSize, countStyle: .file)))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             
@@ -102,23 +107,21 @@ struct DeletePreviewSheet: View {
                 
                 Spacer()
                 
-                Button(hasNetworkFiles ? "results.delete.permanently".localized : (defaultMoveToTrash ? "results.move.to.trash".localized : "results.delete.permanently".localized)) {
-                    onConfirm(hasNetworkFiles ? false : defaultMoveToTrash)
+                Button(defaultMoveToTrash ? "results.move.to.trash".localized : "results.delete.permanently".localized) {
+                    onConfirm(defaultMoveToTrash)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(hasNetworkFiles ? .red : (defaultMoveToTrash ? .orange : .red))
+                .tint(defaultMoveToTrash ? .orange : .red)
                 .disabled(filesToDelete.isEmpty)
                 .focusable(false)
                 
-                if !hasNetworkFiles {
-                    Button(defaultMoveToTrash ? "results.delete.permanently".localized : "results.move.to.trash".localized) {
-                        onConfirm(!defaultMoveToTrash)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(defaultMoveToTrash ? .red : .orange)
-                    .disabled(filesToDelete.isEmpty)
-                    .focusable(false)
+                Button(defaultMoveToTrash ? "results.delete.permanently".localized : "results.move.to.trash".localized) {
+                    onConfirm(!defaultMoveToTrash)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(defaultMoveToTrash ? .red : .orange)
+                .disabled(filesToDelete.isEmpty)
+                .focusable(false)
             }
             .padding()
         }
@@ -174,12 +177,7 @@ struct DeletePreviewSheet: View {
     }
     
     private func isNetworkVolume(_ url: URL) -> Bool {
-        do {
-            let resourceValues = try url.resourceValues(forKeys: [.volumeIsLocalKey])
-            return !(resourceValues.volumeIsLocal ?? true)
-        } catch {
-            return false
-        }
+        VolumeKind.isNetwork(url)
     }
 }
 

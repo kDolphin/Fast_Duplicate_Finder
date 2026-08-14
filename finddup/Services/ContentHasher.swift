@@ -25,7 +25,7 @@ enum ContentHasher: Sendable {
     /// - turboFinal: `t128:` + 32 hex (two xxHash64 seeds)
     /// - standard/full: 64 hex SHA-256
     static func hashFile(at url: URL, size: Int64, mode: Mode) -> String? {
-        let isNetwork = url.path.hasPrefix("/Volumes/")
+        let isNetwork = VolumeKind.isNetwork(url)
         
         do {
             let handle = try FileHandle(forReadingFrom: url)
@@ -81,9 +81,14 @@ enum ContentHasher: Sendable {
         return hash.count == 64 && hash.allSatisfy(\.isHexDigit)
     }
     
-    /// Final digests usable as group keys / durable cache (turbo product mode).
+    /// Turbo grouping / durable cache keys. SHA-256 from precise verify must not
+    /// share this space or a later turbo scan will split the same content.
     static func isFinalHash(_ hash: String, for mode: ScanMode = .turbo) -> Bool {
         _ = mode
+        return isTurboGroupHash(hash)
+    }
+    
+    static func isTurboGroupHash(_ hash: String) -> Bool {
         if hash.hasPrefix("t128:") {
             let body = hash.dropFirst(5)
             return body.count == 32 && body.allSatisfy(\.isHexDigit)
@@ -92,7 +97,15 @@ enum ContentHasher: Sendable {
             let body = hash.split(separator: ":").last.map(String.init) ?? ""
             return body.count == 32 && body.allSatisfy(\.isHexDigit)
         }
-        // SHA-256 from precise verify can also be cached/grouped
+        return false
+    }
+    
+    /// Full-file SHA-256 from the verify pass (session grouping only, not turbo cache).
+    static func isPreciseHash(_ hash: String) -> Bool {
+        if hash.hasPrefix("sha256:") {
+            let body = hash.dropFirst(7)
+            return body.count == 64 && body.allSatisfy(\.isHexDigit)
+        }
         return hash.count == 64 && hash.allSatisfy(\.isHexDigit)
     }
     
@@ -289,14 +302,14 @@ enum ContentHasher: Sendable {
 
 enum StorageConcurrency: Sendable {
     static func isNetworkPath(_ path: String) -> Bool {
-        path.hasPrefix("/Volumes/")
+        VolumeKind.isNetwork(URL(fileURLWithPath: path))
     }
     
     static func isNetworkScan(roots: [URL], sample: [FileInfo]) -> Bool {
-        if roots.contains(where: { isNetworkPath($0.path) }) { return true }
+        if roots.contains(where: { VolumeKind.isNetwork($0) }) { return true }
         let n = min(32, sample.count)
         guard n > 0 else { return false }
-        let networkHits = sample.prefix(n).filter { isNetworkPath($0.url.path) }.count
+        let networkHits = sample.prefix(n).filter { VolumeKind.isNetwork($0.url) }.count
         return networkHits * 2 >= n // ≥50% sample on network
     }
     

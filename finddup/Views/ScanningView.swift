@@ -122,24 +122,28 @@ struct ErrorView: View {
 }
 
 struct NoResultsView: View {
+    var cancelled: Bool = false
+    
     var body: some View {
         VStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(Color.green.opacity(0.12))
+                    .fill((cancelled ? Color.orange : Color.green).opacity(0.12))
                     .frame(width: 72, height: 72)
-                Image(systemName: "checkmark.circle.fill")
+                Image(systemName: cancelled ? "stop.circle.fill" : "checkmark.circle.fill")
                     .font(.system(size: 32))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(cancelled ? .orange : .green)
             }
             
             VStack(spacing: 8) {
-                Text("results.no.duplicates".localized)
+                Text((cancelled ? "results.scan.cancelled.title" : "results.no.duplicates").localized)
                     .font(.title3.weight(.semibold))
                 
-                Text("results.all.unique".localized)
+                Text((cancelled ? "results.scan.cancelled.message" : "results.all.unique").localized)
                     .font(.body)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 400)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

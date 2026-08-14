@@ -1,4 +1,6 @@
 import SwiftUI
+import UniformTypeIdentifiers
+import AppKit
 
 struct SidebarView: View {
     @Binding var selectedFolders: [URL]
@@ -9,6 +11,8 @@ struct SidebarView: View {
     var onOpenSettings: (() -> Void)? = nil
     let onFoldersSelected: ([URL]) -> Void
     let onScanTapped: () -> Void
+    
+    @State private var isDropTargeted = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -90,17 +94,18 @@ struct SidebarView: View {
                             .font(.caption.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
+                            .contentShape(Rectangle())
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(AppTheme.brandSoft)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(AppTheme.brand.opacity(0.28), lineWidth: 1)
+                            )
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(AppTheme.brand)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(AppTheme.brandSoft)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(AppTheme.brand.opacity(0.28), lineWidth: 1)
-                    )
                     .disabled(isScanning)
                     .opacity(isScanning ? 0.45 : 1)
                     
@@ -109,17 +114,18 @@ struct SidebarView: View {
                             .font(.caption.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 9)
+                            .contentShape(Rectangle())
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(AppTheme.danger.opacity(0.10))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(AppTheme.danger.opacity(0.28), lineWidth: 1)
+                            )
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(AppTheme.danger)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(AppTheme.danger.opacity(0.10))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(AppTheme.danger.opacity(0.28), lineWidth: 1)
-                    )
                     .disabled(isScanning)
                     .opacity(isScanning ? 0.45 : 1)
                     .help("sidebar.clear.all.help".localized)
@@ -140,6 +146,7 @@ struct SidebarView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
+                    .contentShape(Rectangle())
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(isScanning ? AppTheme.danger : AppTheme.brand)
@@ -162,7 +169,28 @@ struct SidebarView: View {
         }
         .frame(minWidth: AppTheme.sidebarMinWidth, idealWidth: AppTheme.sidebarWidth, maxWidth: 280)
         .background(AppTheme.page)
+        .overlay(
+            RoundedRectangle(cornerRadius: 0)
+                .strokeBorder(isDropTargeted ? AppTheme.brand : .clear, lineWidth: 2)
+                .allowsHitTesting(false)
+        )
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            guard !isScanning else { return false }
+            FolderDrop.collectDirectories(from: providers) { dropped in
+                mergeDroppedFolders(dropped)
+            }
+            return true
+        }
         .focusable(false)
+    }
+    
+    private func mergeDroppedFolders(_ dropped: [URL]) {
+        guard !dropped.isEmpty else { return }
+        var next = selectedFolders
+        for url in dropped where !next.contains(where: { $0.path == url.path }) {
+            next.append(url)
+        }
+        onFoldersSelected(next)
     }
     
     private func clearFolders() {
@@ -184,6 +212,7 @@ struct SidebarView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(AppTheme.brandSoft)
@@ -195,6 +224,13 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .disabled(isScanning)
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            guard !isScanning else { return false }
+            FolderDrop.collectDirectories(from: providers) { dropped in
+                mergeDroppedFolders(dropped)
+            }
+            return true
+        }
     }
     
     private func locationRow(_ folder: URL) -> some View {
@@ -260,6 +296,42 @@ struct SidebarView: View {
                 !selectedFolders.contains { $0.path == new.path }
             }
             onFoldersSelected(selectedFolders + newFolders)
+        }
+    }
+}
+
+enum FolderDrop {
+    static func collectDirectories(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var urls: [URL] = []
+        for provider in providers {
+            guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { continue }
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                defer { group.leave() }
+                let url: URL?
+                if let value = item as? URL {
+                    url = value
+                } else if let data = item as? Data {
+                    url = URL(dataRepresentation: data, relativeTo: nil)
+                } else if let path = item as? String {
+                    url = URL(fileURLWithPath: path)
+                } else {
+                    url = nil
+                }
+                guard let url else { return }
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+                    return
+                }
+                lock.lock()
+                urls.append(url)
+                lock.unlock()
+            }
+        }
+        group.notify(queue: .main) {
+            completion(urls)
         }
     }
 }

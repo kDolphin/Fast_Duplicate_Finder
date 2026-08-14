@@ -2,6 +2,30 @@ import Foundation
 import Combine
 import SwiftUI
 
+enum ScanOutcome: Sendable {
+    case idle
+    case completed
+    case cancelled
+}
+
+/// Per-scan cancel bit so off-main enumeration sees Stop immediately.
+final class ScanCancelFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+    
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
 // MARK: - UI-facing scan statistics (kept for compatibility)
 struct ScanStatistics {
     var totalFiles: Int = 0
@@ -52,6 +76,8 @@ final class DuplicateFinder: ObservableObject {
     @Published var totalScanDuration: TimeInterval = 0
     @Published var totalFilesScanned: Int = 0
     @Published var lastTiming = ScanTimingBreakdown()
+    /// Distinguishes “never scanned” from empty results / cancel (UI state).
+    @Published var lastOutcome: ScanOutcome = .idle
     
     @AppStorage("excluded_extensions") private var excludedExtensionsString = "tmp,cache,log"
     @AppStorage("skip_hidden_files") private var skipHiddenFiles = true
@@ -64,6 +90,7 @@ final class DuplicateFinder: ObservableObject {
     
     private var currentScanTask: Task<Void, Never>?
     private let pipeline = ScanPipeline()
+    private var cancelFlag = ScanCancelFlag()
     
     private var excludedExtensions: Set<String> {
         Set(excludedExtensionsString.split(separator: ",").map {
@@ -93,8 +120,11 @@ final class DuplicateFinder: ObservableObject {
     
     func findDuplicates(in folders: [URL], completion: @escaping () -> Void) {
         currentScanTask?.cancel()
+        cancelFlag.cancel()
         // Nonisolated — must not wait for the pipeline actor (previous large scan may hold it).
         pipeline.cancel()
+        let cancelFlag = ScanCancelFlag()
+        self.cancelFlag = cancelFlag
         
         let settings = settingsSnapshot
         
@@ -111,36 +141,64 @@ final class DuplicateFinder: ObservableObject {
             self.scanStatistics = ScanStatistics()
             self.lastTiming = ScanTimingBreakdown()
             self.totalScanDuration = 0
+            self.lastOutcome = .idle
+            ProcessInfo.processInfo.disableSuddenTermination()
+            defer { ProcessInfo.processInfo.enableSuddenTermination() }
             
             // Wall clock for the whole run (must equal enumerate + pipeline phases).
             let scanWallStart = Date()
             
-            // 1) Enumerate immediately — do not await pipeline first (that froze “Initializing…”).
+            // 1) Warm hash cache off the main actor — first launch decodes a multi‑MB plist
+            // and used to freeze the UI at 5% “Scanning files…”.
+            if !ScanCacheManager.shared.isHot() {
+                self.currentPhase = "scan.phase.initializing".localized
+                self.scanProgress = "scan.prepare.cache".localized
+                self.scanProgressPercent = 0.03
+                await Task.detached(priority: .userInitiated) {
+                    _ = ScanCacheManager.shared.loadCache()
+                }.value
+                if cancelFlag.isCancelled || Task.isCancelled {
+                    self.scanProgress = "scan.cancelled".localized
+                    self.scanProgressPercent = 0
+                    self.lastOutcome = .cancelled
+                    completion()
+                    return
+                }
+            }
+            
+            // 2) Enumerate off the main actor so the first directory walk cannot freeze the bar.
             self.currentPhase = "scan.phase.scanning".localized
             self.scanProgress = "scan.files".localized
             self.scanProgressPercent = 0.05
-            let hasNetworkRoot = folders.contains { $0.path.hasPrefix("/Volumes/") }
+            let hasNetworkRoot = folders.contains {
+                VolumeKind.classify(path: $0.path, volumeIsLocal: nil)
+            }
             if hasNetworkRoot {
                 self.scanProgress = "scan.files.network".localized
             }
             
             let enumStarted = Date()
-            let enumerated = await FileEnumerator.enumerate(
-                folders: folders,
-                settings: settings,
-                isCancelled: { Task.isCancelled },
-                onProgress: { [weak self] update in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.applyEnumerationProgress(update, started: enumStarted, folderCount: folders.count)
+            let enumerated = await Task.detached(priority: .userInitiated) {
+                let packageHashCache = ScanCacheManager.shared.loadCache().cachedFiles
+                return await FileEnumerator.enumerate(
+                    folders: folders,
+                    settings: settings,
+                    packageHashCache: packageHashCache,
+                    isCancelled: { cancelFlag.isCancelled },
+                    onProgress: { update in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            self.applyEnumerationProgress(update, started: enumStarted, folderCount: folders.count)
+                        }
                     }
-                }
-            )
+                )
+            }.value
             let enumerateDuration = Date().timeIntervalSince(enumStarted)
             
-            if Task.isCancelled {
+            if Task.isCancelled || cancelFlag.isCancelled {
                 self.scanProgress = "scan.cancelled".localized
                 self.scanProgressPercent = 0
+                self.lastOutcome = .cancelled
                 completion()
                 return
             }
@@ -157,9 +215,10 @@ final class DuplicateFinder: ObservableObject {
                 }
             }
             
-            if Task.isCancelled {
+            if Task.isCancelled || cancelFlag.isCancelled {
                 self.scanProgress = "scan.cancelled".localized
                 self.scanProgressPercent = 0
+                self.lastOutcome = .cancelled
                 completion()
                 return
             }
@@ -185,6 +244,7 @@ final class DuplicateFinder: ObservableObject {
             self.scanProgressPercent = 1.0
             self.estimatedTimeRemaining = 0
             self.currentPhase = "scan.phase.finalizing".localized
+            self.lastOutcome = .completed
             
             completion()
             self.currentScanTask = nil
@@ -192,42 +252,34 @@ final class DuplicateFinder: ObservableObject {
     }
     
     func cancelScan() {
+        cancelFlag.cancel()
         currentScanTask?.cancel()
         pipeline.cancel()
         scanProgress = "scan.cancelled".localized
         scanProgressPercent = 0
         errorMessage = nil
+        lastOutcome = .cancelled
     }
     
     func removeDeletedFile(_ file: FileInfo) {
-        duplicateGroups = duplicateGroups.compactMap { group in
-            let remaining = group.files.filter { $0.url != file.url }
-            guard remaining.count >= 2 else { return nil }
-            let sorted = sortForDisplay(remaining)
-            let mismatch = PackageIdentity.hasIdentityMismatch(packages: sorted)
-            // Re-evaluate: deleting may resolve a name-mismatch group
-            let review: Bool
-            let verified: Bool
-            if mismatch {
-                review = true
-                verified = false
-            } else if group.packageIdentityMismatch {
-                // Was name-mismatch; remaining names now related → keep content confidence
-                review = false
-                verified = group.isVerified || group.hash.hasPrefix("pkgv:") || group.hash.hasPrefix("sha256:")
-            } else {
-                review = group.needsReview
-                verified = group.isVerified
-            }
-            return DuplicateGroup(
-                files: sorted,
+        removeDeletedURLs([file.url])
+    }
+    
+    func removeDeletedURLs(_ urls: Set<URL>) {
+        guard !urls.isEmpty else { return }
+        duplicateGroups = DuplicateGroupEditing.removing(urls, from: duplicateGroups).map { group in
+            DuplicateGroup(
+                files: sortForDisplay(group.files),
                 fileSize: group.fileSize,
                 hash: group.hash,
-                needsReview: review,
-                isVerified: verified,
-                packageIdentityMismatch: mismatch,
+                needsReview: group.needsReview,
+                isVerified: group.isVerified,
+                packageIdentityMismatch: group.packageIdentityMismatch,
                 id: group.id
             )
+        }
+        if duplicateGroups.isEmpty {
+            lastOutcome = .completed
         }
     }
     
@@ -286,12 +338,7 @@ final class DuplicateFinder: ObservableObject {
             }
             
             for (hash, files) in byHash where files.count > 1 {
-                let sorted = files.sorted { a, b in
-                    if a.url.path.hasPrefix("/Volumes/") != b.url.path.hasPrefix("/Volumes/") {
-                        return !a.url.path.hasPrefix("/Volumes/")
-                    }
-                    return a.url.path.count < b.url.path.count
-                }
+                let sorted = sortForDisplay(files)
                 let mismatch = PackageIdentity.hasIdentityMismatch(packages: sorted)
                 // Content may match, but unrelated package names stay untrusted for delete
                 next.append(DuplicateGroup(
@@ -305,21 +352,8 @@ final class DuplicateFinder: ObservableObject {
             }
         }
         
-        // Write SHA-256 results into cache for next scans
-        await Task.detached {
-            var cache = ScanCacheManager.shared.loadCache()
-            for group in next where group.isVerified {
-                for file in group.files {
-                    cache.cachedFiles[file.pathKey] = CachedFileInfo(
-                        url: file.url,
-                        size: file.size,
-                        modificationDate: file.modificationDate,
-                        hash: group.hash
-                    )
-                }
-            }
-            ScanCacheManager.shared.saveCache(cache)
-        }.value
+        // Do not write SHA-256 / pkgv into the turbo hash cache — next scan
+        // must keep grouping on t128:/pkg: or same content splits.
         
         next.sort { $0.duplicateSize > $1.duplicateSize }
         duplicateGroups = next
@@ -384,8 +418,8 @@ final class DuplicateFinder: ObservableObject {
     
     private func sortForDisplay(_ files: [FileInfo]) -> [FileInfo] {
         files.sorted { a, b in
-            let aNet = a.url.path.hasPrefix("/Volumes/")
-            let bNet = b.url.path.hasPrefix("/Volumes/")
+            let aNet = VolumeKind.isNetwork(a.url)
+            let bNet = VolumeKind.isNetwork(b.url)
             if aNet != bNet { return !aNet }
             return a.url.path.count < b.url.path.count
         }
@@ -429,6 +463,7 @@ enum FileEnumerator {
     static func enumerate(
         folders: [URL],
         settings: ScanSettings,
+        packageHashCache: [String: CachedFileInfo]? = nil,
         isCancelled: @escaping @Sendable () -> Bool,
         onProgress: @escaping @Sendable (Progress) -> Void
     ) async -> [FileInfo] {
@@ -439,11 +474,21 @@ enum FileEnumerator {
         var totalFiles = 0
         
         // Package interior walks dominate /Applications scans — reuse durable hash cache by path+mtime.
-        let packageHashCache = ScanCacheManager.shared.loadCache().cachedFiles
+        // Prefer a preloaded map so the first scan does not decode the plist on the UI task.
+        let packageHashCache = packageHashCache ?? ScanCacheManager.shared.loadCache().cachedFiles
+        
+        if let first = folders.first {
+            onProgress(Progress(
+                visited: 0,
+                files: 0,
+                isNetwork: VolumeKind.isNetwork(first),
+                folderName: first.lastPathComponent
+            ))
+        }
         
         for folder in folders {
             if isCancelled() { break }
-            let isNetwork = StorageConcurrency.isNetworkPath(folder.path)
+            let isNetwork = VolumeKind.isNetwork(folder)
             let name = folder.lastPathComponent
             let baseVisited = totalVisited
             let baseFiles = totalFiles

@@ -6,7 +6,7 @@
 "sidebar.locations" = "扫描位置";
 "sidebar.scanning.scope" = "本次扫描";
 "sidebar.select.folder" = "添加要扫描的文件夹";
-"sidebar.drop.hint" = "可选择一个或多个目录";
+"sidebar.drop.hint" = "将文件夹拖到此处，或点击选择";
 "sidebar.scan.need.folder" = "添加文件夹后即可扫描";
 "sidebar.start.scan" = "开始扫描";
 "sidebar.stop.scan" = "停止";
@@ -71,6 +71,8 @@
 /* Results */
 "results.no.duplicates" = "未发现重复";
 "results.all.unique" = "所选文件夹中没有重复组";
+"results.scan.cancelled.title" = "扫描已取消";
+"results.scan.cancelled.message" = "未发布本次结果。已算出的哈希会保留，下次扫描更快。";
 "results.expand.all" = "全部展开";
 "results.collapse.all" = "全部收起";
 "results.move.to.trash" = "移至废纸篓";
@@ -138,7 +140,7 @@
 "delete.preview.title" = "删除预览";
 "delete.preview.message" = "将删除 %d 项，释放 %@";
 "delete.preview.group" = "第 %d 组 · %@";
-"delete.network.warning" = "网络文件可能被永久删除（无法使用废纸篓）。";
+"delete.network.warning" = "网络卷上的文件始终永久删除。本地文件仍按「废纸篓 / 永久删除」处理。";
 "delete.package.identity.warning" = "当前选择包含内容相同但名称/路径表示不同用途的项（套壳、语言包、多产品同角色等）。";
 "delete.file.help" = "立即删除此项";
 
@@ -182,8 +184,8 @@
 "settings.confirm.before.delete.help" = "清理前显示预览";
 "settings.move.to.trash" = "移至废纸篓";
 "settings.move.to.trash.help" = "本地文件进废纸篓；网络卷可能永久删除";
-"settings.auto.delete" = "扫描后自动清理";
-"settings.auto.delete.help" = "扫描结束后自动清理已勾选项（请谨慎）";
+"settings.auto.delete" = "跳过清理预览";
+"settings.auto.delete.help" = "通过安全提示后立即清理。若开启「清理前确认」，此选项无效。";
 "settings.min.size" = "最小文件大小";
 "settings.min.size.help" = "小于此大小的文件将被忽略";
 "settings.max.size" = "最大文件大小";

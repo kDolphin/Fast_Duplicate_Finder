@@ -139,6 +139,29 @@ struct ScanCache: Codable {
         return entriesToRemove.count
     }
     
+    /// Merge a scan working set. Drops only keys under `scanRoots` that are not
+    /// in `currentPathKeys`; other volumes stay put.
+    mutating func merge(
+        working: [String: CachedFileInfo],
+        scanRoots: [String],
+        currentPathKeys: Set<String>
+    ) {
+        for (key, value) in working {
+            cachedFiles[key] = value
+        }
+        if !scanRoots.isEmpty {
+            for path in Array(cachedFiles.keys) {
+                let underRoot = scanRoots.contains { root in
+                    path == root || path.hasPrefix(root + "/")
+                }
+                if underRoot && !currentPathKeys.contains(path) {
+                    cachedFiles.removeValue(forKey: path)
+                }
+            }
+        }
+        lastScanDate = Date()
+    }
+    
     /// 获取缓存统计信息
     func getCacheStats() -> (totalEntries: Int, estimatedSize: Int64, oldestEntry: Date?, newestEntry: Date?) {
         let totalEntries = cachedFiles.count
@@ -233,6 +256,20 @@ class ScanCacheManager {
                 print("   - Failed to get cache attributes: \(error)")
                 #endif
             }
+        }
+    }
+    
+    func isHot() -> Bool {
+        hotLock.lock()
+        defer { hotLock.unlock() }
+        return hotCache != nil
+    }
+    
+    /// Decode the on-disk cache off the caller’s thread (first launch is multi‑MB).
+    func preloadInBackground() {
+        guard !isHot() else { return }
+        Task.detached(priority: .utility) {
+            _ = ScanCacheManager.shared.loadCache()
         }
     }
     
@@ -376,22 +413,11 @@ class ScanCacheManager {
             base = hotCache ?? base
         }
         
-        for (key, value) in working.cachedFiles {
-            base.cachedFiles[key] = value
-        }
-        
-        if !roots.isEmpty {
-            for path in Array(base.cachedFiles.keys) {
-                let underRoot = roots.contains { root in
-                    path == root || path.hasPrefix(root + "/")
-                }
-                if underRoot && !current.contains(path) {
-                    base.cachedFiles.removeValue(forKey: path)
-                }
-            }
-        }
-        
-        base.lastScanDate = Date()
+        base.merge(
+            working: working.cachedFiles,
+            scanRoots: roots,
+            currentPathKeys: current
+        )
         hotCache = base
         let toWrite = base
         hotLock.unlock()
