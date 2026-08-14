@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - 文件 / 整包 扫描项
+// MARK: - File / package scan item
 struct FileInfo: Identifiable, Hashable, Sendable {
     let id: UUID
     let url: URL
@@ -42,7 +42,7 @@ struct FileInfo: Identifiable, Hashable, Sendable {
     }
 }
 
-// MARK: - 重复文件组模型
+// MARK: - Duplicate group
 struct DuplicateGroup: Identifiable, Sendable {
     let id: UUID
     let files: [FileInfo]
@@ -174,7 +174,7 @@ enum PackageIdentity {
         case localeVariants
         /// Same relative role under different product roots (e.g. CodeResources in each .ccl)
         case multiProductRole
-        /// Other intentional different basenames (not copy/副本)
+        /// Other intentional different basenames (not copy / 副本 suffixes)
         case differentNames
     }
     
@@ -196,7 +196,7 @@ enum PackageIdentity {
         options: []
     )
     
-    /// True when basenames are essentially the same (copy / 副本 / (1) variants).
+    /// True when basenames are essentially the same (copy / 副本 / “(1)” variants).
     static func basenamesAreRelated(_ names: [String]) -> Bool {
         let stems = Set(names.map { normalizeBasename($0) }.filter { !$0.isEmpty })
         return stems.count <= 1
@@ -244,7 +244,7 @@ enum PackageIdentity {
             return .packageShell
         }
         
-        // 5) Different basenames that are not copy/副本 variants
+        // 5) Different basenames that are not copy / 副本 variants
         if !sameName, !basenamesAreRelated(names) {
             return .differentNames
         }
@@ -604,7 +604,7 @@ enum PackageIdentity {
     }
 }
 
-// MARK: - 删除结果模型
+// MARK: - Delete result
 struct DeleteResult: Sendable {
     let successCount: Int
     let failureCount: Int
@@ -618,7 +618,7 @@ struct DeleteResult: Sendable {
     }
 }
 
-// MARK: - 扫描模式（产品固定为极速；枚举保留以兼容快照）
+// MARK: - Scan mode (product is turbo-only; enum kept for snapshot compatibility)
 enum ScanMode: String, Sendable, CaseIterable, Identifiable {
     /// Only supported product mode: dual xxHash finals + optional UI verify
     case turbo
@@ -632,7 +632,7 @@ enum ScanMode: String, Sendable, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - 扫描设置快照（离开 MainActor 后使用）
+// MARK: - Scan settings snapshot (used off the main actor)
 struct ScanSettings: Sendable {
     var excludedExtensions: Set<String>
     var skipHiddenFiles: Bool
@@ -645,7 +645,7 @@ struct ScanSettings: Sendable {
     var maxSizeBytes: Int64 { Int64(maxFileSizeGB * 1024 * 1024 * 1024) }
 }
 
-// MARK: - 进度回调载荷
+// MARK: - Progress payload
 struct ScanProgressUpdate: Sendable {
     var phase: String
     var message: String

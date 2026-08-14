@@ -39,7 +39,7 @@ struct DeletePreviewSheet: View {
     
     var body: some View {
         VStack(spacing: 16) {
-            // 标题和统计信息
+            // Title and totals
             VStack(spacing: 8) {
                 Text("delete.preview.title".localized)
                     .font(.title2)
@@ -68,7 +68,7 @@ struct DeletePreviewSheet: View {
             
             Divider()
             
-            // 文件列表
+            // File list
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(Array(markedGroups.enumerated()), id: \.element.id) { index, group in
@@ -77,7 +77,7 @@ struct DeletePreviewSheet: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             
-                            // 文件列表
+                            // File list
                             ForEach(Array(group.files.enumerated()), id: \.offset) { index, file in
                                 FilePreviewRow(
                                     file: file,
@@ -98,7 +98,7 @@ struct DeletePreviewSheet: View {
             
             Divider()
             
-            // 操作按钮
+            // Actions
             HStack {
                 Button("alert.cancel".localized) {
                     dismiss()
@@ -134,38 +134,38 @@ struct DeletePreviewSheet: View {
         let isFirstFile = group.files.first?.url == fileURL
         
         if group.files.count == 2 {
-            // 2文件组：点击任何文件都切换到只选择该文件
+            // Two-file group: clicking a file selects only that file
             if filesToDelete.contains(fileURL) {
-                // 如果点击的是已选中的文件，取消选择
+                // Already marked — unmark
                 filesToDelete.remove(fileURL)
             } else {
-                // 如果点击的是未选中的文件，清除组内所有选择，然后选择这个文件
+                // Clear other marks in the group, then mark this file
                 for groupFileURL in groupFileURLs {
                     filesToDelete.remove(groupFileURL)
                 }
                 filesToDelete.insert(fileURL)
             }
         } else {
-            // 多文件组
+            // Three or more files
             if filesToDelete.contains(fileURL) {
-                // 取消选择这个文件
+                // Unmark this file
                 filesToDelete.remove(fileURL)
             } else {
-                // 选择这个文件
+                // Mark this file
                 filesToDelete.insert(fileURL)
                 
-                // 如果选择第一个文件，需要确保至少有一个其他文件被取消选择
+                // Keep at least one survivor if the keep (first) file is marked
                 if isFirstFile {
                     let selectedInGroup = groupFileURLs.intersection(filesToDelete)
                     if selectedInGroup.count == group.files.count {
-                        // 如果选择了所有文件，取消选择第二个文件
+                        // All marked — unmark the second file
                         if group.files.count > 1 {
                             let secondFileURL = group.files[1].url
                             filesToDelete.remove(secondFileURL)
                         }
                     }
                 } else {
-                    // 选择非第一个文件时，如果选择了所有文件，取消选择第一个
+                    // Marking a non-keep file: if everything is marked, unmark the first
                     let selectedInGroup = groupFileURLs.intersection(filesToDelete)
                     if selectedInGroup.count == group.files.count {
                         let firstFileURL = group.files.first!.url
@@ -189,13 +189,13 @@ struct FilePreviewRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // 文件图标
+            // Icon
             Image(systemName: isFirst ? "star.fill" : "doc.fill")
                 .foregroundStyle(isFirst ? .yellow : .blue)
                 .font(.title3)
                 .frame(width: 20)
             
-            // 文件信息
+            // File info
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(file.url.lastPathComponent)
@@ -220,7 +220,7 @@ struct FilePreviewRow: View {
                     .lineLimit(2)
             }
             
-            // 选择框（所有文件都显示，但有不同的交互）
+            // Checkbox (every row; keep-file has different toggle rules)
             Button(action: onToggle) {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .foregroundStyle(isSelected ? .red : .secondary)

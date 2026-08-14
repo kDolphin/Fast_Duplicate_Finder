@@ -139,6 +139,7 @@ struct SettingsView: View {
             onResetDefaults: { showingResetConfirmation = true }
         )
         
+        UpdateSettingsSection()
         CacheManagementSection()
         AboutSection()
     }
@@ -183,5 +184,6 @@ struct SettingsView: View {
         confirmBeforeDelete = true
         moveToTrash = true
         autoDeleteDuplicates = false
+        UserDefaults.standard.set(true, forKey: UpdateChecker.autoCheckKey)
     }
 }

@@ -9,7 +9,7 @@ struct OutlineGroupRow: View {
     let onToggle: () -> Void
     let onDeleteFile: (FileInfo) -> Void
     let onVerifyGroup: () -> Void
-    /// Optional: mark all non-keep members in this group (follow “建议保留”).
+    /// Optional: mark all non-keep members in this group (follow the Keep suggestion).
     var onApplyKeepSuggestion: (() -> Void)? = nil
     
     private static let sizeFormatter: ByteCountFormatter = {
@@ -378,7 +378,7 @@ enum DeleteSelectionPolicy {
         return set
     }
     
-    /// Mark every non-keep member (index > 0) in each group. Keeps index 0 (“建议保留”).
+    /// Mark every non-keep member (index > 0) in each group. Keeps index 0 (suggested keep).
     /// Used for purpose-risk bulk apply when the user trusts sort-for-keep order.
     @discardableResult
     static func applyKeepSuggestions(

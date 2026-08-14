@@ -12,6 +12,9 @@ struct FindupApp: App {
                     minWidth: AppTheme.windowMinWidth,
                     minHeight: AppTheme.windowMinHeight
                 )
+                .onAppear {
+                    UpdateChecker.shared.scheduleLaunchCheckIfNeeded()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     localization.reloadFromSystem()
                 }
@@ -20,6 +23,11 @@ struct FindupApp: App {
         .windowToolbarStyle(.expanded)
         .defaultSize(width: 1200, height: 780)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("update.menu.check".localized) {
+                    Task { await UpdateChecker.shared.check(reason: .manual) }
+                }
+            }
             // Standard macOS Settings menu item + ⌘,
             CommandGroup(replacing: .appSettings) {
                 Button("settings.title".localized) {

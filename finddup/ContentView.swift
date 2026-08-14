@@ -19,7 +19,7 @@ struct ContentView: View {
     @State private var showingPackageIdentityBeforeDelete = false
     @State private var didRestoreFolders = false
     
-    // 删除设置
+    // Deletion settings
     @AppStorage("confirm_before_delete") private var confirmBeforeDelete = true
     @AppStorage("move_to_trash") private var moveToTrash = true
     @AppStorage("auto_delete_duplicates") private var autoDeleteDuplicates = false
@@ -172,17 +172,17 @@ struct ContentView: View {
         NSApp.activate(ignoringOtherApps: true)
     }
     
-    // MARK: - 扫描相关方法
+    // MARK: - Scan
     private func startScan() {
         if isScanning {
-            // 停止扫描
+            // Stop
             duplicateFinder.cancelScan()
             isScanning = false
         } else {
-            // 开始扫描
+            // Start
             guard !selectedFolders.isEmpty else { return }
             
-            // 权限预检查
+            // Permission probe
             if needsPermissionCheck(for: selectedFolders) {
                 requestPermissionForFolders(selectedFolders) { granted in
                     if granted {
@@ -199,7 +199,7 @@ struct ContentView: View {
     }
     
     private func performScan() {
-        // 清空之前的结果和错误信息
+        // Clear previous results and errors
         duplicateFinder.duplicateGroups = []
         duplicateFinder.errorMessage = nil
         filesToDelete.removeAll()
@@ -217,7 +217,7 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 删除相关方法
+    // MARK: - Delete
     /// - Parameter selection: filter-scoped marks from ResultsView (not the full global set).
     private func prepareAutoDelete(selection: Set<URL>) {
         cleanupSelection = selection
@@ -300,7 +300,7 @@ struct ContentView: View {
             
             for fileURL in batch {
                 do {
-                    // 智能删除：网络文件直接删除，本地文件根据选择处理
+                    // Local → Trash when asked; network volumes always remove permanently
                     if moveToTrash && !VolumeKind.isNetwork(fileURL) {
                         try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
                     } else {
@@ -344,11 +344,11 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 权限相关方法
+    // MARK: - Permissions
     private func needsPermissionCheck(for folders: [URL]) -> Bool {
-        // 通过实际尝试访问来判断是否需要权限
+        // Probe by actually listing — TCC paths may fail even after a picker grant.
         for folder in folders {
-            // 先检查常见的受保护目录
+            // Common protected locations first
             let pathComponents = folder.pathComponents
             let protectedFolders = ["Desktop", "Documents", "Downloads", 
                                    "Pictures", "Movies", "Music", "Library"]
@@ -358,7 +358,7 @@ struct ContentView: View {
             }
             
             if isProtectedPath {
-                // 尝试实际访问来验证
+                // Try a real listing
                 do {
                     _ = try FileManager.default.contentsOfDirectory(
                         at: folder,
@@ -368,7 +368,7 @@ struct ContentView: View {
                 } catch CocoaError.fileReadNoPermission, CocoaError.fileNoSuchFile {
                     return true
                 } catch {
-                    // 其他错误也认为需要检查权限
+                    // Any other error: treat as needing a permission check
                     return true
                 }
             }
@@ -381,9 +381,9 @@ struct ContentView: View {
         var deniedFolder: URL?
         
         for folder in folders {
-            // 尝试访问文件夹
+            // Try to read the folder
             do {
-                // 先获取security-scoped resource访问权
+                // Start security-scoped access first
                 let hasAccess = folder.startAccessingSecurityScopedResource()
                 defer {
                     if hasAccess {
@@ -391,7 +391,7 @@ struct ContentView: View {
                     }
                 }
                 
-                // 尝试读取目录内容
+                // List directory contents
                 _ = try FileManager.default.contentsOfDirectory(
                     at: folder,
                     includingPropertiesForKeys: [.isRegularFileKey],
@@ -403,9 +403,9 @@ struct ContentView: View {
                     deniedFolder = folder
                     break
                 }
-                // 其他错误继续检查
+                // Other Cocoa errors: keep checking remaining folders
             } catch {
-                // 非 CocoaError 类型的错误，也认为可能有权限问题
+                // Non-CocoaError: still treat as a possible permission issue
                 hasPermissionIssue = true
                 deniedFolder = folder
                 break
@@ -450,7 +450,7 @@ struct ContentView: View {
     
 }
 
-// MARK: - 欢迎视图
+// MARK: - Welcome
 struct WelcomeView: View {
     @ObservedObject private var localizationManager = LocalizationManager.shared
     

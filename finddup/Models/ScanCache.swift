@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - 路径标准化工具
+// MARK: - Path canonicalization
 extension String {
     /// Stable cache key across launches (firmlinks, trailing slash, Unicode).
     var standardizedPath: String {
@@ -27,7 +27,7 @@ extension String {
     }
 }
 
-// MARK: - 缓存文件信息
+// MARK: - Cached file record
 struct CachedFileInfo: Codable {
     let urlPath: String
     let size: Int64
@@ -75,15 +75,15 @@ struct CachedFileInfo: Codable {
     }
 }
 
-// MARK: - 扫描缓存
+// MARK: - Scan cache
 struct ScanCache: Codable {
     var cachedFiles: [String: CachedFileInfo] = [:]
     var lastScanDate: Date = Date()
     
-    // 缓存配置
-    private static let maxCacheAge: TimeInterval = 30 * 24 * 60 * 60 // 30天
-    private static let maxCacheEntries = 2_000_000 // 最大缓存条目数
-    private static let maxCacheSize: Int64 = 300 * 1024 * 1024 // 300MB估算大小
+    // Limits
+    private static let maxCacheAge: TimeInterval = 30 * 24 * 60 * 60 // 30 days
+    private static let maxCacheEntries = 2_000_000 // max entries
+    private static let maxCacheSize: Int64 = 300 * 1024 * 1024 // ~300 MB estimate
     
     mutating func cleanObsoleteEntries(currentFiles: [FileInfo], scanPaths: [URL]) {
         // Prefer cached pathKey — avoid re-standardizing 100k+ paths on every save.
@@ -108,7 +108,7 @@ struct ScanCache: Codable {
         _ = cleanOversizeEntries()
     }
     
-    /// 清理过期的缓存条目
+    /// Drop entries older than `maxCacheAge`.
     private mutating func cleanExpiredEntries() -> Int {
         let now = Date()
         let expiredKeys = cachedFiles.compactMap { (key, value) in
@@ -123,16 +123,16 @@ struct ScanCache: Codable {
         return expiredKeys.count
     }
     
-    /// 清理超出大小限制的缓存条目
+    /// Drop oldest entries when over `maxCacheEntries`.
     private mutating func cleanOversizeEntries() -> Int {
         guard cachedFiles.count > Self.maxCacheEntries else { return 0 }
         
-        // 按最后扫描时间排序，保留最新的
+        // Keep the most recently scanned entries
         let sortedEntries = cachedFiles.sorted { $0.value.lastScanDate > $1.value.lastScanDate }
         let entriesToKeep = sortedEntries.prefix(Self.maxCacheEntries)
         let entriesToRemove = sortedEntries.dropFirst(Self.maxCacheEntries)
         
-        // 重建缓存字典
+        // Rebuild the dictionary
         let newCachedFiles = Dictionary(uniqueKeysWithValues: entriesToKeep.map { ($0.key, $0.value) })
         cachedFiles = newCachedFiles
         
@@ -162,11 +162,11 @@ struct ScanCache: Codable {
         lastScanDate = Date()
     }
     
-    /// 获取缓存统计信息
+    /// Cache statistics for Settings.
     func getCacheStats() -> (totalEntries: Int, estimatedSize: Int64, oldestEntry: Date?, newestEntry: Date?) {
         let totalEntries = cachedFiles.count
         
-        // 估算缓存大小 (每个条目约1KB)
+        // Rough size: ~1 KB per entry
         let estimatedSize = Int64(totalEntries * 1024)
         
         let dates = cachedFiles.values.map { $0.lastScanDate }
@@ -177,18 +177,18 @@ struct ScanCache: Codable {
     }
 }
 
-// MARK: - 缓存管理器
+// MARK: - Cache manager
 class ScanCacheManager {
     static let shared = ScanCacheManager()
     
     private let cacheFileURL: URL
-    private let useBinaryFormat = true  // 使用二进制格式
+    private let useBinaryFormat = true  // binary plist
     /// Avoid re-decoding a multi‑MB plist on every scan (hot path for large NAS libraries).
     private var hotCache: ScanCache?
     private let hotLock = NSLock()
     
     init() {
-        // 获取应用信息用于调试
+        // Bundle / sandbox info for debug logs
         let bundleId = Bundle.main.bundleIdentifier ?? "unknown"
         let isInSandbox = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
         
@@ -202,7 +202,7 @@ class ScanCacheManager {
         print("   - Sandboxed: \(isInSandbox)")
         #endif
         
-        // 在沙盒环境中，使用应用的缓存目录
+        // Sandboxed: use the app caches directory
         let cacheDirectory: URL
         if let appCacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
             cacheDirectory = appCacheDirectory.appendingPathComponent("finddup")
@@ -210,7 +210,7 @@ class ScanCacheManager {
             print("   - Using app cache directory: \(appCacheDirectory.path)")
             #endif
         } else {
-            // 备用方案：使用用户主目录（非沙盒环境）
+            // Fallback: ~/.cache when not sandboxed
             let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
             cacheDirectory = homeDirectory.appendingPathComponent(".cache/finddup")
             #if DEBUG
@@ -234,7 +234,7 @@ class ScanCacheManager {
         print("📁 Cache file URL: \(cacheFileURL.path) (format: \(useBinaryFormat ? "binary" : "JSON"))")
         #endif
         
-        // 检查缓存文件是否存在
+        // Log whether the cache file already exists
         let cacheExists = FileManager.default.fileExists(atPath: cacheFileURL.path)
         #if DEBUG
         print("💾 Cache file exists: \(cacheExists)")
@@ -354,26 +354,26 @@ class ScanCacheManager {
         var paths: [URL] = []
         
         let cacheFileName = useBinaryFormat ? "scan_cache.plist" : "scan_cache.json"
-        let legacyFileName = "scan_cache.json"  // 总是检查JSON格式的旧缓存
+        let legacyFileName = "scan_cache.json"  // always look for the old JSON cache
         
-        // 1. 用户主目录缓存
+        // 1. Home-directory cache
         let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
         paths.append(homeDirectory.appendingPathComponent(".cache/finddup/\(cacheFileName)"))
         paths.append(homeDirectory.appendingPathComponent(".cache/finddup/\(legacyFileName)"))
         
-        // 2. 系统缓存目录
+        // 2. System caches directory
         if let systemCacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
             paths.append(systemCacheDir.appendingPathComponent("finddup/\(cacheFileName)"))
             paths.append(systemCacheDir.appendingPathComponent("finddup/\(legacyFileName)"))
         }
         
-        // 3. 应用支持目录
+        // 3. Application Support
         if let appSupportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             paths.append(appSupportDir.appendingPathComponent("finddup/\(cacheFileName)"))
             paths.append(appSupportDir.appendingPathComponent("finddup/\(legacyFileName)"))
         }
         
-        return paths.filter { $0 != cacheFileURL } // 排除当前路径
+        return paths.filter { $0 != cacheFileURL } // skip the live path
     }
     
     /// - Parameter syncDisk: when false, update memory immediately and encode/write on a utility queue
@@ -537,7 +537,7 @@ class ScanCacheManager {
         notifyDidChange()
     }
     
-    /// 缓存健康检查和维护
+    /// Run expiry / size cleanup and persist if anything was dropped.
     func performCacheMaintenance() -> ScanCache {
         #if DEBUG
         print("🔧 Performing cache maintenance...")
@@ -546,7 +546,7 @@ class ScanCacheManager {
         var cache = loadCache()
         let originalCount = cache.cachedFiles.count
         
-        // 执行维护清理 - 创建空的扫描参数来触发全局清理
+        // Empty scan args → global expiry / cap cleanup only
         cache.cleanObsoleteEntries(currentFiles: [], scanPaths: [])
         
         let finalCount = cache.cachedFiles.count
@@ -566,7 +566,7 @@ class ScanCacheManager {
             print("   - Final entries: \(finalCount)")
             #endif
             
-            // 保存清理后的缓存
+            // Persist the cleaned cache
             saveCache(cache)
         } else {
             #if DEBUG
@@ -577,7 +577,7 @@ class ScanCacheManager {
         return cache
     }
     
-    /// 获取缓存健康状态
+    /// Cache health for diagnostics (not user-facing).
     func getCacheHealth() -> (isHealthy: Bool, issues: [String], recommendations: [String]) {
         let cache = loadCache()
         let stats = cache.getCacheStats()
@@ -585,32 +585,32 @@ class ScanCacheManager {
         var issues: [String] = []
         var recommendations: [String] = []
         
-        // 检查缓存大小
+        // Entry count
         if stats.totalEntries > 250_000 {
-            issues.append("缓存条目过多 (\(stats.totalEntries))")
-            recommendations.append("考虑清理旧缓存或减少扫描范围")
+            issues.append("Too many cache entries (\(stats.totalEntries))")
+            recommendations.append("Clear old cache or scan a smaller tree")
         }
         
-        // 检查缓存年龄
+        // Age
         if let oldest = stats.oldestEntry {
             let age = Date().timeIntervalSince(oldest)
-            if age > 60 * 24 * 60 * 60 { // 60天
-                issues.append("存在过旧的缓存条目 (\(Int(age / 86400))天)")
-                recommendations.append("运行缓存维护清理过期条目")
+            if age > 60 * 24 * 60 * 60 { // 60 days
+                issues.append("Stale cache entries (\(Int(age / 86400)) days)")
+                recommendations.append("Run cache maintenance to drop expired entries")
             }
         }
         
-        // 检查估算大小
-        if stats.estimatedSize > 250 * 1024 * 1024 { // 250MB
-            issues.append("缓存文件过大 (\(ByteCountFormatter.string(fromByteCount: stats.estimatedSize, countStyle: .file)))")
-            recommendations.append("执行缓存清理")
+        // Estimated size
+        if stats.estimatedSize > 250 * 1024 * 1024 { // 250 MB
+            issues.append("Cache file is large (\(ByteCountFormatter.string(fromByteCount: stats.estimatedSize, countStyle: .file)))")
+            recommendations.append("Clear the cache")
         }
         
         let isHealthy = issues.isEmpty
         return (isHealthy, issues, recommendations)
     }
     
-    /// 获取缓存文件URL
+    /// On-disk cache file URL.
     func getCacheFileURL() -> URL {
         return cacheFileURL
     }

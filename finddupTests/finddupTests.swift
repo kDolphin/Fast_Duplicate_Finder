@@ -126,3 +126,13 @@ struct DuplicateGroupEditingTests {
         #expect(empty.isEmpty)
     }
 }
+
+struct AppVersionTests {
+    @Test func tagPrefixAndPatchOrder() {
+        #expect(AppVersion.normalize("v1.0.6") == "1.0.6")
+        #expect(AppVersion.isNewer("v1.0.6", than: "1.0.5"))
+        #expect(AppVersion.isNewer("1.0.10", than: "1.0.9"))
+        #expect(!AppVersion.isNewer("1.0.5", than: "1.0.5"))
+        #expect(!AppVersion.isNewer("1.0.4", than: "1.0.5"))
+    }
+}

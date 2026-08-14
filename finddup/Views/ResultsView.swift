@@ -41,47 +41,15 @@ struct ResultsView: View {
     var onOpenSettings: (() -> Void)? = nil
     
     @State private var filter: ResultsListFilter = .all
-    @State private var searchText = ""
+    /// Bound to the field — updates every keystroke, must stay cheap.
+    @State private var searchField = ""
+    /// Applied to the list after a short debounce.
+    @State private var appliedSearch = ""
+    @State private var searchDebounce: Task<Void, Never>?
+    @StateObject private var searchIndex = GroupSearchIndex()
     
     private var reviewCount: Int {
         duplicateGroups.reduce(0) { $0 + (($1.needsReview && !$1.isVerified) ? 1 : 0) }
-    }
-    
-    /// Purpose-risk groups in the current filter that still need “apply keep suggestions”.
-    private var purposeRiskPendingCount: Int {
-        // Cheap path: only scan packageIdentityMismatch groups (usually ≪ total).
-        var n = 0
-        for group in filteredGroups where group.packageIdentityMismatch && group.files.count > 1 {
-            let nonKeepMarked = group.files.dropFirst().contains { selectedForDelete.contains($0.url) }
-            if !nonKeepMarked { n += 1 }
-        }
-        return n
-    }
-    
-    var totalSize: Int64 {
-        duplicateGroups.reduce(0) { $0 + $1.duplicateSize }
-    }
-    
-    private var filteredGroups: [DuplicateGroup] {
-        var list = duplicateGroups
-        switch filter {
-        case .all: break
-        case .review:
-            list = list.filter { $0.needsReview && !$0.isVerified }
-        case .packages:
-            list = list.filter(\.isPackageGroup)
-        }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !q.isEmpty {
-            let lowered = q.lowercased()
-            list = list.filter { group in
-                group.files.contains {
-                    $0.url.lastPathComponent.lowercased().contains(lowered)
-                        || $0.url.path.lowercased().contains(lowered)
-                }
-            }
-        }
-        return list
     }
     
     /// O(1) for bulk expand-all; no scanning tens of thousands of IDs.
@@ -89,40 +57,24 @@ struct ResultsView: View {
         expandState.isFullyExpanded
     }
     
-    /// URLs belonging to groups in the current filter (+ search). Cleanup uses this scope only.
-    private var urlsInFilteredGroups: Set<URL> {
-        var urls = Set<URL>()
-        urls.reserveCapacity(filteredGroups.count * 2)
-        for group in filteredGroups {
-            for file in group.files {
-                urls.insert(file.url)
-            }
-        }
-        return urls
-    }
-    
-    /// Marks that fall inside the current filter — drives the Clean Up button count and action.
-    private var filteredSelectedForDelete: Set<URL> {
-        selectedForDelete.intersection(urlsInFilteredGroups)
-    }
-    
     var body: some View {
-        VStack(spacing: 0) {
+        let groups = visibleGroups(query: appliedSearch)
+        let selectedCount = markedCount(in: groups)
+        return VStack(spacing: 0) {
             if embedsTopBar {
                 ResultsChromeBar(
-                    groupCount: filteredGroups.count,
-                    selectedCount: filteredSelectedForDelete.count,
+                    groupCount: groups.count,
+                    selectedCount: selectedCount,
                     filter: $filter,
-                    searchText: $searchText,
+                    searchText: $searchField,
                     reviewCount: reviewCount,
-                    purposeRiskPendingCount: purposeRiskPendingCount,
+                    purposeRiskPendingCount: purposeRiskPending(in: groups),
                     isVerifying: isVerifying,
                     allExpanded: allFilteredExpanded,
                     onToggleAll: toggleAllFiltered,
                     onApplyKeepSuggestions: applyKeepSuggestionsToFiltered,
                     onDeletePreview: {
-                        // Only clean items visible under the active filter / search.
-                        onDeletePreview(filteredSelectedForDelete)
+                        onDeletePreview(markedURLs(in: groups))
                     },
                     onVerifyAllReview: onVerifyAllReview,
                     onOpenSettings: onOpenSettings
@@ -131,8 +83,9 @@ struct ResultsView: View {
             
             VStack(spacing: 10) {
                 ResultsMetricsStrip(
-                    groupCount: duplicateGroups.count,
-                    freeableSize: totalSize,
+                    groupCount: groups.count,
+                    freeableSize: markedBytes(in: groups),
+                    potentialFreeableSize: groups.reduce(0) { $0 + $1.duplicateSize },
                     totalFilesScanned: totalFilesScanned,
                     totalScanDuration: totalScanDuration,
                     reviewCount: reviewCount
@@ -164,14 +117,14 @@ struct ResultsView: View {
                 .fill(AppTheme.separator)
                 .frame(height: 1)
             
-            if filteredGroups.isEmpty {
-                ResultsEmptyFilterView(filter: filter, hasSearch: !searchText.isEmpty)
+            if groups.isEmpty {
+                ResultsEmptyFilterView(filter: filter, hasSearch: !appliedSearch.isEmpty)
             } else {
                 ScrollView {
                     // LazyVStack: only visible rows materialize. Expand-all must stay O(1)
                     // (GroupExpandState.expandAll) so we never build 40k expanded trees at once.
                     LazyVStack(spacing: 4, pinnedViews: []) {
-                        ForEach(filteredGroups) { group in
+                        ForEach(groups) { group in
                             OutlineGroupRow(
                                 group: group,
                                 isExpanded: expandState.isExpanded(group.id),
@@ -190,20 +143,96 @@ struct ResultsView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                 }
+                .transaction { $0.animation = nil }
             }
         }
         .background(AppTheme.page)
         .focusable(false)
-        // Expose filter state to parent chrome via preference if needed later
+        .onChange(of: searchField) { newValue in
+            scheduleSearchApply(newValue)
+        }
+        .onDisappear {
+            searchDebounce?.cancel()
+        }
         .background(
             FilterBridge(
                 filter: $filter,
-                searchText: $searchText,
+                searchText: $searchField,
                 allExpanded: allFilteredExpanded,
                 reviewCount: reviewCount,
                 onToggleAll: toggleAllFiltered
             )
         )
+    }
+    
+    private func scheduleSearchApply(_ raw: String) {
+        searchDebounce?.cancel()
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            appliedSearch = ""
+            return
+        }
+        searchDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 160_000_000)
+            guard !Task.isCancelled else { return }
+            appliedSearch = trimmed
+        }
+    }
+    
+    private func visibleGroups(query: String) -> [DuplicateGroup] {
+        searchIndex.prepare(duplicateGroups)
+        var list = duplicateGroups
+        switch filter {
+        case .all: break
+        case .review:
+            list = list.filter { $0.needsReview && !$0.isVerified }
+        case .packages:
+            list = list.filter(\.isPackageGroup)
+        }
+        if !query.isEmpty {
+            let lowered = query.lowercased()
+            list = list.filter { searchIndex.matches($0, query: lowered) }
+        }
+        return list
+    }
+    
+    private func purposeRiskPending(in groups: [DuplicateGroup]) -> Int {
+        var n = 0
+        for group in groups where group.packageIdentityMismatch && group.files.count > 1 {
+            let nonKeepMarked = group.files.dropFirst().contains { selectedForDelete.contains($0.url) }
+            if !nonKeepMarked { n += 1 }
+        }
+        return n
+    }
+    
+    private func markedCount(in groups: [DuplicateGroup]) -> Int {
+        var n = 0
+        for group in groups {
+            for file in group.files where selectedForDelete.contains(file.url) {
+                n += 1
+            }
+        }
+        return n
+    }
+    
+    private func markedBytes(in groups: [DuplicateGroup]) -> Int64 {
+        var total: Int64 = 0
+        for group in groups {
+            for file in group.files where selectedForDelete.contains(file.url) {
+                total += group.fileSize
+            }
+        }
+        return total
+    }
+    
+    private func markedURLs(in groups: [DuplicateGroup]) -> Set<URL> {
+        var urls = Set<URL>()
+        for group in groups {
+            for file in group.files where selectedForDelete.contains(file.url) {
+                urls.insert(file.url)
+            }
+        }
+        return urls
     }
     
     private func toggleAllFiltered() {
@@ -223,14 +252,45 @@ struct ResultsView: View {
         DeleteSelectionPolicy.applyKeepSuggestions(to: &selectedForDelete, groups: [group])
     }
     
-    /// Bulk: purpose-risk groups in the current filter → mark all non-“建议保留” members.
+    /// Bulk: purpose-risk groups in the current filter → mark all non-keep members.
     private func applyKeepSuggestionsToFiltered() {
         let pending = DeleteSelectionPolicy.purposeRiskGroupsNeedingSuggestions(
-            in: filteredGroups,
+            in: visibleGroups(query: appliedSearch),
             selection: selectedForDelete
         )
         guard !pending.isEmpty else { return }
         DeleteSelectionPolicy.applyKeepSuggestions(to: &selectedForDelete, groups: pending)
+    }
+}
+
+/// Lowercased path blobs, built once per group so typing does not re-lowercase 40k paths.
+private final class GroupSearchIndex: ObservableObject {
+    private var haystacks: [UUID: String] = [:]
+    
+    func prepare(_ groups: [DuplicateGroup]) {
+        if haystacks.count == groups.count, groups.allSatisfy({ haystacks[$0.id] != nil }) {
+            return
+        }
+        if haystacks.count > groups.count + 256 {
+            haystacks.removeAll(keepingCapacity: true)
+        }
+        haystacks.reserveCapacity(groups.count)
+        for group in groups where haystacks[group.id] == nil {
+            var blob = ""
+            blob.reserveCapacity(group.files.count * 80)
+            for file in group.files {
+                blob.append(file.url.path.lowercased())
+                blob.append("\n")
+            }
+            haystacks[group.id] = blob
+        }
+    }
+    
+    func matches(_ group: DuplicateGroup, query: String) -> Bool {
+        if let haystack = haystacks[group.id] {
+            return haystack.contains(query)
+        }
+        return group.files.contains { $0.url.path.lowercased().contains(query) }
     }
 }
 
@@ -283,7 +343,7 @@ struct ResultsChromeBar: View {
     @ViewBuilder
     private func chromeRow(compact: Bool) -> some View {
         HStack(spacing: compact ? 8 : 10) {
-            // Filter first (includes 需复核)
+            // Filter first (includes Needs review)
             Picker("", selection: $filter) {
                 ForEach(ResultsListFilter.allCases) { f in
                     Text(f.titleKey.localized).tag(f)
@@ -337,7 +397,7 @@ struct ResultsChromeBar: View {
                 
                 if reviewCount > 0 {
                     Button(action: {
-                        // Jump filter to 需复核 so action and category stay linked
+                        // Jump filter to Needs review so action and category stay linked
                         if filter != .review { filter = .review }
                         onVerifyAllReview()
                     }) {
@@ -368,7 +428,7 @@ struct ResultsChromeBar: View {
                     .help("review.verify.all.help".localized)
                 }
                 
-                // Purpose-risk: default unchecked; one tap follows “建议保留” for many groups.
+                // Purpose-risk: default unchecked; one tap applies keep suggestions for many groups.
                 if purposeRiskPendingCount > 0, let onApplyKeepSuggestions {
                     Button(action: onApplyKeepSuggestions) {
                         HStack(spacing: 5) {
@@ -444,9 +504,21 @@ struct ResultsChromeBar: View {
 struct ResultsMetricsStrip: View {
     let groupCount: Int
     let freeableSize: Int64
+    let potentialFreeableSize: Int64
     let totalFilesScanned: Int
     let totalScanDuration: TimeInterval
     let reviewCount: Int
+    
+    private var freeableHint: String {
+        if freeableSize <= 0 {
+            return "results.metric.freeable.none".localized
+        }
+        if freeableSize < potentialFreeableSize {
+            let cap = ByteCountFormatter.string(fromByteCount: potentialFreeableSize, countStyle: .file)
+            return "results.metric.freeable.more".localized(cap)
+        }
+        return "results.metric.freeable.hint".localized
+    }
     
     var body: some View {
         HStack(spacing: 10) {
@@ -462,11 +534,11 @@ struct ResultsMetricsStrip: View {
             )
             CompactMetricTile(
                 icon: "internaldrive.fill",
-                iconBg: AppTheme.metricGreen.opacity(0.14),
-                iconFg: AppTheme.metricGreen,
+                iconBg: (freeableSize > 0 ? AppTheme.metricGreen : AppTheme.metricGray).opacity(0.14),
+                iconFg: freeableSize > 0 ? AppTheme.metricGreen : AppTheme.metricGray,
                 value: ByteCountFormatter.string(fromByteCount: freeableSize, countStyle: .file),
                 title: "results.metric.freeable".localized,
-                subtitle: "results.metric.freeable.hint".localized
+                subtitle: freeableHint
             )
             CompactMetricTile(
                 icon: "clock.fill",
@@ -616,7 +688,7 @@ struct ResultsEmptyFilterView: View {
 }
 
 enum ResultsDuration {
-    /// Stable multi-unit strings so "39分钟" never hides the missing ~15 min gap.
+    /// Stable multi-unit strings so a lone "39 min" never hides the missing ~15 min gap.
     static func format(_ t: TimeInterval) -> String {
         if t < 0.001 { return "duration.under_ms".localized }
         if t < 1 { return "duration.ms".localized(t * 1000) }

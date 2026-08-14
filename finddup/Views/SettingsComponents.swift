@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - 设置区块组件
+// MARK: - Settings section chrome
 struct SettingsSection<Content: View>: View {
     let title: String
     let icon: String
@@ -35,7 +35,7 @@ struct SettingsSection<Content: View>: View {
     }
 }
 
-// MARK: - 扫描设置
+// MARK: - Scan settings
 struct ScanSettingsSection: View {
     @Binding var skipHiddenFiles: Bool
     @Binding var skipSystemFiles: Bool
@@ -74,7 +74,7 @@ struct ScanSettingsSection: View {
     }
 }
 
-// MARK: - 文件过滤设置
+// MARK: - File filtering
 struct FileFilteringSection: View {
     let excludedExtensions: [String]
     @Binding var newExtension: String
@@ -155,7 +155,7 @@ struct FileFilteringSection: View {
     }
 }
 
-// MARK: - 删除设置
+// MARK: - Cleanup settings
 struct DeletionSettingsSection: View {
     @Binding var confirmBeforeDelete: Bool
     @Binding var moveToTrash: Bool
@@ -197,7 +197,42 @@ struct DeletionSettingsSection: View {
     }
 }
 
-// MARK: - 关于信息
+// MARK: - Updates
+struct UpdateSettingsSection: View {
+    @AppStorage(UpdateChecker.autoCheckKey) private var autoCheck = true
+    @ObservedObject private var checker = UpdateChecker.shared
+    
+    var body: some View {
+        SettingsSection(title: "settings.updates".localized, icon: "arrow.triangle.2.circlepath", iconColor: .teal) {
+            VStack(alignment: .leading, spacing: 14) {
+                SettingsToggle(
+                    title: "settings.updates.auto".localized,
+                    subtitle: "settings.updates.auto.help".localized,
+                    isOn: $autoCheck
+                )
+                Divider().opacity(0.5)
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await checker.check(reason: .manual) }
+                    } label: {
+                        Label("settings.updates.check".localized, systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(checker.isChecking)
+                }
+                if checker.isChecking || !checker.statusText.isEmpty {
+                    Text(checker.isChecking ? "settings.updates.checking".localized : checker.statusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - About
 struct AboutSection: View {
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
@@ -243,7 +278,7 @@ struct AboutSection: View {
     }
 }
 
-// MARK: - 基础组件
+// MARK: - Building blocks
 struct SettingsToggle: View {
     let title: String
     var subtitle: String? = nil
@@ -277,7 +312,7 @@ struct SettingsFileSizeGBField: View {
     let unit: String
     
     private var minValue: Double { 0.1 }
-    private var maxValue: Double { 1000.0 } // 最大1TB
+    private var maxValue: Double { 1000.0 } // 1 TB cap
     
     private var helpText: String {
         return "settings.max.size.help".localized
@@ -300,7 +335,7 @@ struct SettingsFileSizeGBField: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
                         .onChange(of: value) { newValue in
-                            // 输入验证
+                            // Validate input
                             if newValue < minValue {
                                 value = minValue
                             } else if newValue > maxValue {
@@ -313,7 +348,7 @@ struct SettingsFileSizeGBField: View {
                 }
             }
             
-            // 范围提示
+            // Range hint
             Text("settings.range.gb".localized(minValue, maxValue))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -331,7 +366,7 @@ struct SettingsFileSizeField: View {
     }
     
     private var maxValue: Int {
-        unit == "KB" ? 1024 : 100000 // KB最大1MB，MB最大100GB
+        unit == "KB" ? 1024 : 100000 // KB cap 1 MB; MB cap 100 GB
     }
     
     private var helpText: String {
@@ -359,7 +394,7 @@ struct SettingsFileSizeField: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 80)
                         .onChange(of: value) { newValue in
-                            // 输入验证
+                            // Validate input
                             if newValue < minValue {
                                 value = minValue
                             } else if newValue > maxValue {
@@ -372,7 +407,7 @@ struct SettingsFileSizeField: View {
                 }
             }
             
-            // 范围提示
+            // Range hint
             Text("settings.range".localized(minValue, maxValue, unit))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -407,7 +442,7 @@ struct PresetButton: View {
     }
 }
 
-// MARK: - 缓存管理
+// MARK: - Cache
 struct CacheManagementSection: View {
     @State private var cacheStats: (totalEntries: Int, estimatedSize: Int64, oldestEntry: Date?, newestEntry: Date?) = (0, 0, nil, nil)
     @State private var cacheLocation: String = ""
@@ -417,7 +452,7 @@ struct CacheManagementSection: View {
     var body: some View {
         SettingsSection(title: "settings.cache.title".localized, icon: "externaldrive") {
             VStack(spacing: 16) {
-                // 缓存信息
+                // Cache stats
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("settings.cache.location".localized)
@@ -453,7 +488,7 @@ struct CacheManagementSection: View {
                 
                 Divider()
                 
-                // 清除按钮
+                // Clear button
                 HStack {
                     Button(action: {
                         showingClearConfirmation = true
