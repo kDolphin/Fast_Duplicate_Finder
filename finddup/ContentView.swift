@@ -79,6 +79,9 @@ struct ContentView: View {
                         onVerifyAllReview: {
                             Task { await duplicateFinder.verifyAllReviewGroups() }
                         },
+                        onCancelVerify: {
+                            duplicateFinder.cancelVerify()
+                        },
                         isVerifying: duplicateFinder.isVerifying,
                         verifyProgressText: duplicateFinder.verifyProgressText,
                         totalScanDuration: duplicateFinder.totalScanDuration,

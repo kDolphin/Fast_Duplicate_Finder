@@ -5,7 +5,7 @@ import CryptoKit
 /// - `partial`: xxHash64 of tiny samples (fast reject)
 /// - `standard`: SHA-256 samples / full small files (Default + Verify)
 /// - `turboFinal`: dual-seed xxHash of larger samples (Turbo mode final)
-/// - `full`: entire-file SHA-256 (Verify pass)
+/// - `full`: entire-file dual xxHash (`t128f:`) for Precise compare
 enum ContentHasher: Sendable {
     
     /// Files at or below this size: one full read (skip partial round-trip).
@@ -22,8 +22,8 @@ enum ContentHasher: Sendable {
     
     /// Digest string suitable for grouping / cache.
     /// - partial: `x64:` + 16 hex
-    /// - turboFinal: `t128:` + 32 hex (two xxHash64 seeds)
-    /// - standard/full: 64 hex SHA-256
+    /// - turboFinal: `t128:` + 32 hex (sampled dual xxHash64)
+    /// - full: `t128f:` + 32 hex (whole-file dual xxHash64)
     static func hashFile(at url: URL, size: Int64, mode: Mode) -> String? {
         let isNetwork = VolumeKind.isNetwork(url)
         
@@ -40,7 +40,9 @@ enum ContentHasher: Sendable {
                     return formatXXH(0)
                 case .turboFinal:
                     return formatTurbo(0, 0)
-                case .standard, .full:
+                case .full:
+                    return formatTurboFull(0, 0)
+                case .standard:
                     var h = SHA256()
                     withUnsafeBytes(of: Int64(0).bigEndian) { h.update(bufferPointer: $0) }
                     return hexSHA(h.finalize())
@@ -61,7 +63,7 @@ enum ContentHasher: Sendable {
                 }
                 return try hashSHALocalStandard(handle: handle, fileSize: fileSize)
             case .full:
-                return try hashSHAFull(handle: handle, fileSize: fileSize)
+                return try hashTurboFull(handle: handle, fileSize: fileSize)
             }
         } catch {
             return nil
@@ -100,8 +102,16 @@ enum ContentHasher: Sendable {
         return false
     }
     
-    /// Full-file SHA-256 from the verify pass (session grouping only, not turbo cache).
+    /// Whole-file precise digest (`t128f:` / `pkgv:`). Never a turbo group key.
     static func isPreciseHash(_ hash: String) -> Bool {
+        if hash.hasPrefix("t128f:") {
+            let body = hash.dropFirst(6)
+            return body.count == 32 && body.allSatisfy(\.isHexDigit)
+        }
+        if hash.hasPrefix("pkgv:") {
+            let body = hash.split(separator: ":").last.map(String.init) ?? ""
+            return body.count == 32 && body.allSatisfy(\.isHexDigit)
+        }
         if hash.hasPrefix("sha256:") {
             let body = hash.dropFirst(7)
             return body.count == 64 && body.allSatisfy(\.isHexDigit)
@@ -212,6 +222,29 @@ enum ContentHasher: Sendable {
         }
     }
     
+    /// Whole-file dual xxHash for Precise compare (`t128f:`).
+    private static func hashTurboFull(handle: FileHandle, fileSize: Int) throws -> String {
+        var h0 = XXHash64(seed: 0)
+        var h1 = XXHash64(seed: 1)
+        withUnsafeBytes(of: Int64(fileSize).bigEndian) { raw in
+            let d = Data(raw)
+            h0.update(d)
+            h1.update(d)
+        }
+        try handle.seek(toOffset: 0)
+        let chunk = 1024 * 1024
+        var remaining = fileSize
+        while remaining > 0 {
+            let n = min(chunk, remaining)
+            let data = handle.readData(ofLength: n)
+            if data.isEmpty { break }
+            h0.update(data)
+            h1.update(data)
+            remaining -= data.count
+        }
+        return formatTurboFull(h0.digest(), h1.digest())
+    }
+    
     // MARK: - Standard / full (SHA-256)
     
     private static func hashSHAFull(handle: FileHandle, fileSize: Int) throws -> String {
@@ -293,6 +326,10 @@ enum ContentHasher: Sendable {
         "t128:" + String(format: "%016llx%016llx", a, b)
     }
     
+    private static func formatTurboFull(_ a: UInt64, _ b: UInt64) -> String {
+        "t128f:" + String(format: "%016llx%016llx", a, b)
+    }
+    
     private static func hexSHA(_ digest: SHA256Digest) -> String {
         digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -317,6 +354,57 @@ enum StorageConcurrency: Sendable {
     static let networkConcurrency = 6
     /// Network directory listing concurrency (parallel first-level subtrees).
     static let networkEnumConcurrency = 6
+    
+    static func hashFiles(
+        _ files: [FileInfo],
+        mode: ContentHasher.Mode,
+        concurrency: Int,
+        isCancelled: @escaping @Sendable () -> Bool,
+        onProgress: @escaping @Sendable (Int) -> Void
+    ) async -> [(FileInfo, String?)] {
+        var results: [(Int, FileInfo, String?)] = []
+        results.reserveCapacity(files.count)
+        var next = 0
+        var inFlight = 0
+        var done = 0
+        var lastReport = Date.distantPast
+        
+        await withTaskGroup(of: (Int, FileInfo, String?).self) { group in
+            func enqueue() {
+                while next < files.count && inFlight < concurrency {
+                    if isCancelled() { return }
+                    let i = next
+                    let file = files[i]
+                    next += 1
+                    inFlight += 1
+                    group.addTask {
+                        if file.isPackage {
+                            let fp = PackageScanner.strongContentFingerprint(
+                                packageURL: file.url,
+                                skipHidden: true
+                            )
+                            return (i, file, fp)
+                        }
+                        return (i, file, ContentHasher.hashFile(at: file.url, size: file.size, mode: mode))
+                    }
+                }
+            }
+            enqueue()
+            for await item in group {
+                inFlight -= 1
+                results.append(item)
+                done += 1
+                let now = Date()
+                if now.timeIntervalSince(lastReport) >= 0.2 || done == files.count {
+                    lastReport = now
+                    onProgress(done)
+                }
+                if !isCancelled() { enqueue() }
+            }
+        }
+        results.sort { $0.0 < $1.0 }
+        return results.map { ($0.1, $0.2) }
+    }
     
     static func level(for roots: [URL], candidateSample: [FileInfo]) -> Int {
         let cores = ProcessInfo.processInfo.activeProcessorCount

@@ -91,6 +91,7 @@ final class DuplicateFinder: ObservableObject {
     private var currentScanTask: Task<Void, Never>?
     private let pipeline = ScanPipeline()
     private var cancelFlag = ScanCancelFlag()
+    private var verifyCancel = ScanCancelFlag()
     
     private var excludedExtensions: Set<String> {
         Set(excludedExtensionsString.split(separator: ",").map {
@@ -150,12 +151,12 @@ final class DuplicateFinder: ObservableObject {
             
             // 1) Warm hash cache off the main actor — first launch decodes a multi‑MB plist
             // and used to freeze the UI at 5% “Scanning files…”.
-            if !ScanCacheManager.shared.isHot() {
+            if !ScanCacheManager.shared.areShardsReady(for: folders) {
                 self.currentPhase = "scan.phase.initializing".localized
                 self.scanProgress = "scan.prepare.cache".localized
                 self.scanProgressPercent = 0.03
                 await Task.detached(priority: .userInitiated) {
-                    _ = ScanCacheManager.shared.loadCache()
+                    _ = ScanCacheManager.shared.loadCache(for: folders)
                 }.value
                 if cancelFlag.isCancelled || Task.isCancelled {
                     self.scanProgress = "scan.cancelled".localized
@@ -179,7 +180,7 @@ final class DuplicateFinder: ObservableObject {
             
             let enumStarted = Date()
             let enumerated = await Task.detached(priority: .userInitiated) {
-                let packageHashCache = ScanCacheManager.shared.loadCache().cachedFiles
+                let packageHashCache = ScanCacheManager.shared.loadCache(for: folders).cachedFiles
                 return await FileEnumerator.enumerate(
                     folders: folders,
                     settings: settings,
@@ -300,47 +301,80 @@ final class DuplicateFinder: ObservableObject {
         await verifyGroupsPrecise(ids: ids)
     }
     
+    func cancelVerify() {
+        verifyCancel.cancel()
+    }
+    
     func verifyGroupsPrecise(ids: Set<UUID>) async {
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty, !isVerifying else { return }
+        verifyCancel = ScanCancelFlag()
+        let flag = verifyCancel
         isVerifying = true
+        verifyProgressText = "verify.progress".localized(0, 1)
+        ProcessInfo.processInfo.disableSuddenTermination()
         defer {
             isVerifying = false
             verifyProgressText = ""
+            ProcessInfo.processInfo.enableSuddenTermination()
         }
         
-        var next: [DuplicateGroup] = []
         let targets = duplicateGroups.filter { ids.contains($0.id) }
         let keep = duplicateGroups.filter { !ids.contains($0.id) }
-        next.append(contentsOf: keep)
+        let workFiles = targets.flatMap(\.files)
+        guard !workFiles.isEmpty else { return }
         
-        var index = 0
-        for group in targets {
-            index += 1
-            verifyProgressText = "verify.progress".localized(index, targets.count)
-            
-            let ordered = group.files.sorted { $0.pathKey < $1.pathKey }
-            let hashed: [(FileInfo, String?)] = await Task.detached(priority: .userInitiated) {
-                ordered.map { file in
-                    if file.isPackage {
-                        return (file, PackageScanner.strongContentFingerprint(
-                            packageURL: file.url,
-                            skipHidden: true
-                        ))
+        let roots = workFiles.prefix(8).map(\.url)
+        let conc = StorageConcurrency.level(for: roots, candidateSample: workFiles)
+        let total = workFiles.count
+        verifyProgressText = "verify.progress".localized(0, total)
+        
+        let hashed = await Task.detached(priority: .userInitiated) {
+            await StorageConcurrency.hashFiles(
+                workFiles,
+                mode: .full,
+                concurrency: conc,
+                isCancelled: { flag.isCancelled },
+                onProgress: { done in
+                    Task { @MainActor in
+                        self.verifyProgressText = "verify.progress".localized(done, total)
                     }
-                    return (file, ContentHasher.hashFile(at: file.url, size: file.size, mode: .full))
                 }
+            )
+        }.value
+        
+        var byPath: [String: String] = [:]
+        var precise: [String: CachedFileInfo] = [:]
+        for (file, hash) in hashed {
+            guard let hash, ContentHasher.isPreciseHash(hash) else { continue }
+            byPath[file.pathKey] = hash
+            precise[file.pathKey] = CachedFileInfo(
+                url: file.url,
+                size: file.size,
+                modificationDate: file.modificationDate,
+                hash: hash
+            )
+        }
+        if !precise.isEmpty {
+            await Task.detached(priority: .utility) {
+                ScanCacheManager.shared.upsertPrecise(precise, syncDisk: true)
             }.value
-            
-            var byHash: [String: [FileInfo]] = [:]
-            for (file, hash) in hashed {
-                guard let hash else { continue }
-                byHash[hash, default: []].append(file)
+        }
+        
+        var next = keep
+        for group in targets {
+            let complete = group.files.allSatisfy { byPath[$0.pathKey] != nil }
+            if !complete {
+                next.append(group)
+                continue
             }
-            
-            for (hash, files) in byHash where files.count > 1 {
+            var buckets: [String: [FileInfo]] = [:]
+            for file in group.files {
+                guard let hash = byPath[file.pathKey] else { continue }
+                buckets[hash, default: []].append(file)
+            }
+            for (hash, files) in buckets where files.count > 1 {
                 let sorted = sortForDisplay(files)
                 let mismatch = PackageIdentity.hasIdentityMismatch(packages: sorted)
-                // Content may match, but unrelated package names stay untrusted for delete
                 next.append(DuplicateGroup(
                     files: sorted,
                     fileSize: sorted[0].size,
@@ -351,10 +385,6 @@ final class DuplicateFinder: ObservableObject {
                 ))
             }
         }
-        
-        // Do not write SHA-256 / pkgv into the turbo hash cache — next scan
-        // must keep grouping on t128:/pkg: or same content splits.
-        
         next.sort { $0.duplicateSize > $1.duplicateSize }
         duplicateGroups = next
     }
@@ -475,7 +505,7 @@ enum FileEnumerator {
         
         // Package interior walks dominate /Applications scans — reuse durable hash cache by path+mtime.
         // Prefer a preloaded map so the first scan does not decode the plist on the UI task.
-        let packageHashCache = packageHashCache ?? ScanCacheManager.shared.loadCache().cachedFiles
+        let packageHashCache = packageHashCache ?? ScanCacheManager.shared.loadCache(for: folders).cachedFiles
         
         if let first = folders.first {
             onProgress(Progress(

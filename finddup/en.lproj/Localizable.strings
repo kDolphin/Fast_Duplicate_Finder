@@ -209,9 +209,9 @@
 "settings.reset.confirm" = "Reset";
 "settings.reset.confirm.message" = "Restore default scan and cleanup options.";
 "settings.cache.title" = "Cache";
-"settings.cache.location" = "Location";
+"settings.cache.location" = "Folder";
 "settings.cache.entries" = "Entries";
-"settings.cache.size" = "Estimated size";
+"settings.cache.size" = "On disk";
 "settings.cache.oldest" = "Oldest entry";
 "settings.cache.clear" = "Clear cache";
 "settings.cache.clear.confirm.title" = "Clear cache?";
@@ -252,6 +252,9 @@
 "review.verify.all.help" = "Full-file compare on every Needs review group";
 "review.verify.all.count" = "Compare needs review (%d)";
 "review.verify.all.short" = "Compare (%d)";
+"review.verify.stop" = "Stop compare";
+"review.verify.stop.short" = "Stop";
+"review.verify.stop.help" = "Stop precise compare. Finished files are saved.";
 "verify.progress" = "Precise compare %d / %d…";
 "review.delete.warn.title" = "Groups still need review";
 "review.delete.warn.message" = "%d group(s) are still Needs review (fast sampling only). Compare first, or delete only if you accept the risk.";

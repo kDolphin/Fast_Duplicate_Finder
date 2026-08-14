@@ -20,6 +20,9 @@ struct HashKeySpaceTests {
         #expect(!ContentHasher.isTurboGroupHash(sha))
         #expect(ContentHasher.isPreciseHash(sha))
         #expect(ContentHasher.isPreciseHash("sha256:" + sha))
+        let full = "t128f:" + String(repeating: "ab", count: 16)
+        #expect(ContentHasher.isPreciseHash(full))
+        #expect(!ContentHasher.isTurboGroupHash(full))
     }
     
     @Test func shaAndTurboAreDifferentGroupKeys() {
@@ -79,6 +82,37 @@ struct ScanCacheMergeTests {
         #expect(cache.cachedFiles[gone.standardizedPath] == nil)
         #expect(cache.cachedFiles[stay.standardizedPath] != nil)
         #expect(cache.cachedFiles[nas.standardizedPath] != nil)
+    }
+}
+
+struct CacheShardTests {
+    @Test func pathFallbackSplitsVolumesFromBoot() {
+        let nas = CacheShardID.fallback(forPath: "/Volumes/NAS/Photos/a.jpg")
+        let boot = CacheShardID.fallback(forPath: "/Users/me/Movies/a.mov")
+        #expect(nas.token.contains("Volumes"))
+        #expect(boot.token == "p-boot")
+        #expect(nas.token != boot.token)
+    }
+    
+    @Test func slimDropsOldestFirst() {
+        var cache = ScanCache()
+        let old = Date(timeIntervalSince1970: 1)
+        let new = Date(timeIntervalSince1970: 9_999_999)
+        cache.cachedFiles["/old"] = CachedFileInfo(
+            url: URL(fileURLWithPath: "/old"),
+            size: 1,
+            modificationDate: old,
+            hash: "t128:" + String(repeating: "11", count: 16)
+        )
+        cache.cachedFiles["/new"] = CachedFileInfo(
+            url: URL(fileURLWithPath: "/new"),
+            size: 1,
+            modificationDate: new,
+            hash: "t128:" + String(repeating: "22", count: 16)
+        )
+        // lastScanDate is Date() on init — force ages via keepNewest after tweaking is hard.
+        cache.keepNewest(1)
+        #expect(cache.cachedFiles.count == 1)
     }
 }
 

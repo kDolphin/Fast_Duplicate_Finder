@@ -209,9 +209,9 @@
 "settings.reset.confirm" = "恢复";
 "settings.reset.confirm.message" = "将扫描与清理选项恢复为默认值。";
 "settings.cache.title" = "缓存";
-"settings.cache.location" = "位置";
+"settings.cache.location" = "目录";
 "settings.cache.entries" = "条目";
-"settings.cache.size" = "估算大小";
+"settings.cache.size" = "磁盘占用";
 "settings.cache.oldest" = "最早条目";
 "settings.cache.clear" = "清除缓存";
 "settings.cache.clear.confirm.title" = "清除缓存？";
@@ -252,6 +252,9 @@
 "review.verify.all.help" = "对所有「需复核」组做全文精确比对";
 "review.verify.all.count" = "精确比对需复核 (%d)";
 "review.verify.all.short" = "比对 (%d)";
+"review.verify.stop" = "停止比对";
+"review.verify.stop.short" = "停止";
+"review.verify.stop.help" = "停止精确比对。已完成的文件会写入缓存。";
 "verify.progress" = "精确比对 %d / %d…";
 "review.delete.warn.title" = "仍有需复核的组";
 "review.delete.warn.message" = "有 %d 组仍为「需复核」（仅极速采样）。建议先精确比对，或确认风险后再删除。";

@@ -444,7 +444,7 @@ struct PresetButton: View {
 
 // MARK: - Cache
 struct CacheManagementSection: View {
-    @State private var cacheStats: (totalEntries: Int, estimatedSize: Int64, oldestEntry: Date?, newestEntry: Date?) = (0, 0, nil, nil)
+    @State private var cacheStats: (totalEntries: Int, fileSize: Int64, oldestEntry: Date?, newestEntry: Date?) = (0, 0, nil, nil)
     @State private var cacheLocation: String = ""
     @State private var showingClearConfirmation = false
     @State private var isClearing = false
@@ -472,7 +472,7 @@ struct CacheManagementSection: View {
                     HStack {
                         Text("settings.cache.size".localized)
                         Spacer()
-                        Text(ByteCountFormatter.string(fromByteCount: cacheStats.estimatedSize, countStyle: .file))
+                        Text(ByteCountFormatter.string(fromByteCount: cacheStats.fileSize, countStyle: .file))
                             .foregroundStyle(.secondary)
                     }
                     

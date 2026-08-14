@@ -29,6 +29,7 @@ struct ResultsView: View {
     let onDeleteFile: (FileInfo) -> Void
     let onVerifyGroup: (UUID) -> Void
     let onVerifyAllReview: () -> Void
+    var onCancelVerify: (() -> Void)? = nil
     let isVerifying: Bool
     let verifyProgressText: String
     let totalScanDuration: TimeInterval
@@ -81,6 +82,7 @@ struct ResultsView: View {
                         onDeletePreview(markedURLs(in: visible, query: q))
                     },
                     onVerifyAllReview: onVerifyAllReview,
+                    onCancelVerify: onCancelVerify,
                     onOpenSettings: onOpenSettings
                 )
             }
@@ -351,6 +353,7 @@ struct ResultsChromeBar: View {
     var onSearchSubmit: (() -> Void)? = nil
     let onDeletePreview: () -> Void
     let onVerifyAllReview: () -> Void
+    var onCancelVerify: (() -> Void)? = nil
     var onOpenSettings: (() -> Void)? = nil
     /// Brand + group count live in metrics strip / window title — not repeated here.
     var showBrand: Bool = false
@@ -427,37 +430,40 @@ struct ResultsChromeBar: View {
                 .help(allExpanded ? "results.collapse.all".localized : "results.expand.all".localized)
                 .disabled(isVerifying)
                 
-                if reviewCount > 0 {
+                if reviewCount > 0 || isVerifying {
                     Button(action: {
-                        // Jump filter to Needs review so action and category stay linked
+                        if isVerifying {
+                            onCancelVerify?()
+                            return
+                        }
                         if filter != .review { filter = .review }
                         onVerifyAllReview()
                     }) {
                         HStack(spacing: 5) {
                             if isVerifying {
-                                ProgressView().controlSize(.small)
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 11, weight: .semibold))
                             } else {
                                 Image(systemName: "checkmark.shield.fill")
                                     .font(.system(size: 11, weight: .semibold))
                             }
                             if compact {
-                                Text("review.verify.all.short".localized(reviewCount))
+                                Text(isVerifying ? "review.verify.stop.short".localized : "review.verify.all.short".localized(reviewCount))
                                     .font(.caption.weight(.semibold))
                                     .lineLimit(1)
                             } else {
-                                Text("review.verify.all.count".localized(reviewCount))
+                                Text(isVerifying ? "review.verify.stop".localized : "review.verify.all.count".localized(reviewCount))
                                     .font(.caption.weight(.semibold))
                                     .lineLimit(1)
                             }
                         }
-                        .foregroundStyle(AppTheme.review)
+                        .foregroundStyle(isVerifying ? AppTheme.danger : AppTheme.review)
                         .padding(.horizontal, compact ? 8 : 10)
                         .padding(.vertical, 6)
-                        .background(AppTheme.review.opacity(0.14), in: Capsule())
+                        .background((isVerifying ? AppTheme.danger : AppTheme.review).opacity(0.14), in: Capsule())
                     }
                     .buttonStyle(.plain)
-                    .disabled(isVerifying)
-                    .help("review.verify.all.help".localized)
+                    .help(isVerifying ? "review.verify.stop.help".localized : "review.verify.all.help".localized)
                 }
                 
                 // Purpose-risk: default unchecked; one tap applies keep suggestions for many groups.

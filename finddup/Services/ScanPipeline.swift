@@ -122,6 +122,8 @@ actor ScanPipeline {
                     id: g.id
                 )
             }
+            let cache = ScanCacheManager.shared.loadCache(for: scanRoots)
+            let applied = PreciseReview.apply(flagged, cache: cache)
             timing.prepare = Date().timeIntervalSince(prepareStart)
             timing.path = .snapshotHit
             timing.hashing = 0
@@ -138,7 +140,7 @@ actor ScanPipeline {
                 estimatedRemaining: 0,
                 stats: stats
             ))
-            return (flagged, stats, timing)
+            return (applied, stats, timing)
         }
         
         let bySize = Dictionary(grouping: unique, by: \.size)
@@ -158,7 +160,7 @@ actor ScanPipeline {
         ))
         
         // Keys normalized once on disk load; subsequent scans use in-memory hot cache.
-        var cache = ScanCacheManager.shared.loadCache()
+        var cache = ScanCacheManager.shared.loadCache(for: scanRoots)
         
         await progress(.init(
             phase: "scan.phase.processing",
@@ -447,6 +449,7 @@ actor ScanPipeline {
                 await Task.yield()
             }
         }
+        groups = PreciseReview.apply(groups, cache: cache)
         groups.sort { $0.duplicateSize > $1.duplicateSize }
         
         if stats.newFiles == 0 && stats.cachedFiles > 0 {
