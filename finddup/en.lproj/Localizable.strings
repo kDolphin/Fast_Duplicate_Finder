@@ -245,9 +245,13 @@
 /* Review / precise compare */
 "review.suggested" = "Needs review";
 "review.verified" = "Confirmed";
+"review.precise.done" = "Compared";
+"review.precise.done.help" = "Full-file precise compare finished for this group.";
 "review.suggested.hint" = "Matched by fast sampling. Run Precise compare before deleting.";
 "review.verify.group" = "Precise compare";
-"review.verify.group.help" = "Full-file compare on this group";
+"review.verify.group.running" = "Comparing…";
+"review.verify.group.help" = "Optional full-file compare for this group. This is an action, not a result.";
+"review.verify.group.purpose.help" = "Full-file compare for this group. Purpose-risk groups show Compared afterward; delete is still your call.";
 "review.verify.all" = "Compare needs review";
 "review.verify.all.help" = "Full-file compare on every Needs review group";
 "review.verify.all.count" = "Compare needs review (%d)";

@@ -74,15 +74,28 @@ struct ContentView: View {
                         },
                         onDeleteFile: deleteFile,
                         onVerifyGroup: { id in
-                            Task { await duplicateFinder.verifyGroupPrecise(id: id) }
+                            Task {
+                                await duplicateFinder.verifyGroupPrecise(id: id)
+                                filesToDelete = DeleteSelectionPolicy.reconcile(
+                                    previous: filesToDelete,
+                                    groups: duplicateFinder.duplicateGroups
+                                )
+                            }
                         },
                         onVerifyAllReview: {
-                            Task { await duplicateFinder.verifyAllReviewGroups() }
+                            Task {
+                                await duplicateFinder.verifyAllReviewGroups()
+                                filesToDelete = DeleteSelectionPolicy.reconcile(
+                                    previous: filesToDelete,
+                                    groups: duplicateFinder.duplicateGroups
+                                )
+                            }
                         },
                         onCancelVerify: {
                             duplicateFinder.cancelVerify()
                         },
                         isVerifying: duplicateFinder.isVerifying,
+                        verifyingGroupIDs: duplicateFinder.verifyingGroupIDs,
                         verifyProgressText: duplicateFinder.verifyProgressText,
                         totalScanDuration: duplicateFinder.totalScanDuration,
                         totalFilesScanned: duplicateFinder.totalFilesScanned,

@@ -86,6 +86,8 @@ final class DuplicateFinder: ObservableObject {
     @AppStorage("max_file_size_gb") private var maxFileSizeGB = 50.0
     
     @Published var isVerifying = false
+    /// Only these group rows show a spinner (bulk compare may include many).
+    @Published var verifyingGroupIDs: Set<UUID> = []
     @Published var verifyProgressText = ""
     
     private var currentScanTask: Task<Void, Never>?
@@ -310,10 +312,12 @@ final class DuplicateFinder: ObservableObject {
         verifyCancel = ScanCancelFlag()
         let flag = verifyCancel
         isVerifying = true
+        verifyingGroupIDs = ids
         verifyProgressText = "verify.progress".localized(0, 1)
         ProcessInfo.processInfo.disableSuddenTermination()
         defer {
             isVerifying = false
+            verifyingGroupIDs = []
             verifyProgressText = ""
             ProcessInfo.processInfo.enableSuddenTermination()
         }
@@ -387,6 +391,9 @@ final class DuplicateFinder: ObservableObject {
         }
         next.sort { $0.duplicateSize > $1.duplicateSize }
         duplicateGroups = next
+        // Same file list → snapshot hit on next scan; persist post-compare groups
+        // so “Confirmed” survives without relying only on PreciseReview remap.
+        ScanSnapshotStore.refreshGroups(from: next, syncDisk: true)
     }
     
     // MARK: - Progress

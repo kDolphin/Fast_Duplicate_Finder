@@ -279,6 +279,15 @@ class ScanCacheManager {
     
     private func storeAndWrite(_ id: CacheShardID, _ shard: ScanCache, syncDisk: Bool) {
         var slimmed = shard
+        // Concurrent upsertPrecise may have landed newer precise rows in `loaded`
+        // after this shard was copied — keep them instead of clobbering.
+        lock.lock()
+        if let current = loaded[id.token] {
+            for (key, value) in current.preciseFiles where slimmed.preciseFiles[key] == nil {
+                slimmed.preciseFiles[key] = value
+            }
+        }
+        lock.unlock()
         let data = slimmed.slimForDisk()
         lock.lock()
         loaded[id.token] = slimmed

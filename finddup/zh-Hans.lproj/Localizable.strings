@@ -245,9 +245,13 @@
 /* Review */
 "review.suggested" = "需复核";
 "review.verified" = "已确认";
+"review.precise.done" = "已精确比对";
+"review.precise.done.help" = "本组已完成全文精确比对。";
 "review.suggested.hint" = "由极速采样匹配。删除前建议「精确比对」。";
 "review.verify.group" = "精确比对";
-"review.verify.group.help" = "对本组做全文精确比对";
+"review.verify.group.running" = "比对中…";
+"review.verify.group.help" = "对本组做全文精确比对（可选）。点此运行，不是结果状态。";
+"review.verify.group.purpose.help" = "对本组做全文精确比对。用途风险组比对后会标「已精确比对」，删除仍需你确认。";
 "review.verify.all" = "精确比对需复核";
 "review.verify.all.help" = "对所有「需复核」组做全文精确比对";
 "review.verify.all.count" = "精确比对需复核 (%d)";

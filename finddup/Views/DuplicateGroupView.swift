@@ -4,7 +4,10 @@ import SwiftUI
 struct OutlineGroupRow: View {
     let group: DuplicateGroup
     let isExpanded: Bool
+    /// Any precise compare in flight (disables other row actions).
     let isVerifying: Bool
+    /// Spinner only on groups included in the current compare.
+    var isVerifyingThisGroup: Bool = false
     @Binding var selectedForDelete: Set<URL>
     let onToggle: () -> Void
     let onDeleteFile: (FileInfo) -> Void
@@ -36,6 +39,48 @@ struct OutlineGroupRow: View {
         return group.files.reduce(0) { $0 + (selectedForDelete.contains($1.url) ? 1 : 0) }
     }
     
+    /// Whole-file compare finished (normal Confirmed or purpose-risk with `t128f:` / `pkgv:`).
+    private var hasPreciseCompare: Bool {
+        group.isVerified || ContentHasher.isPreciseHash(group.hash)
+    }
+    
+    @ViewBuilder
+    private var preciseCompareTrailing: some View {
+        if hasPreciseCompare {
+            Text("review.precise.done".localized)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AppTheme.keep)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(AppTheme.keep.opacity(0.14), in: Capsule())
+                .help("review.precise.done.help".localized)
+        } else {
+            Button(action: onVerifyGroup) {
+                HStack(spacing: 4) {
+                    if isVerifyingThisGroup {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    Text(isVerifyingThisGroup
+                         ? "review.verify.group.running".localized
+                         : "review.verify.group".localized)
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(AppTheme.brand)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(AppTheme.brandSoft, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isVerifying)
+            .help(group.packageIdentityMismatch
+                  ? "review.verify.group.purpose.help".localized
+                  : "review.verify.group.help".localized)
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header only — keep collapsed rows cheap for 10k–40k lists.
@@ -65,9 +110,7 @@ struct OutlineGroupRow: View {
                             title: group.purposeBadgeKey.localized,
                             color: AppTheme.review
                         )
-                    } else if group.isVerified {
-                        StatusChip(title: "review.verified".localized, color: AppTheme.keep)
-                    } else if group.needsReview {
+                    } else if group.needsReview && !hasPreciseCompare {
                         StatusChip(title: "review.suggested".localized, color: AppTheme.review)
                     }
                     
@@ -93,27 +136,9 @@ struct OutlineGroupRow: View {
                             Self.sizeFormatter.string(fromByteCount: group.duplicateSize)
                         ))
                     
-                    if group.needsReview && !group.isVerified && !group.packageIdentityMismatch {
-                        Button(action: onVerifyGroup) {
-                            HStack(spacing: 4) {
-                                if isVerifying {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Image(systemName: "checkmark.shield.fill")
-                                        .font(.system(size: 10, weight: .semibold))
-                                }
-                                Text("review.verify.group".localized)
-                                    .font(.caption2.weight(.semibold))
-                            }
-                            .foregroundStyle(AppTheme.brand)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(AppTheme.brandSoft, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isVerifying)
-                        .help("review.verify.group.help".localized)
-                    }
+                    // Same trailing slot: blue action → green “precisely compared” (incl. purpose-risk).
+                    preciseCompareTrailing
+                        .frame(minWidth: 88, alignment: .trailing)
                 }
                 .frame(minHeight: AppTheme.groupRowHeight)
                 .padding(.horizontal, 10)
@@ -212,13 +237,24 @@ struct OutlineGroupRow: View {
     }
     
     private var groupTitle: String {
+        DuplicateGroupDisplay.outlineTitle(for: group)
+    }
+}
+
+/// Collapsed-row title: related/same basenames → representative name; otherwise count-only.
+enum DuplicateGroupDisplay {
+    static func outlineTitle(for group: DuplicateGroup) -> String {
+        let names = group.files.map(\.url.lastPathComponent)
+        let related = PackageIdentity.basenamesAreRelated(names)
+        
         if group.isPackageGroup {
-            if group.files.count <= 3 {
-                return group.files.map(\.url.lastPathComponent).joined(separator: " · ")
+            if related, let first = names.first {
+                return "\(first)  ·  \(group.files.count)"
             }
             return "results.duplicate.packages".localized(group.files.count)
         }
-        if let first = group.files.first?.url.lastPathComponent, group.files.count <= 4 {
+        
+        if related, let first = names.first {
             return "\(first)  ·  \(group.files.count)"
         }
         return "results.duplicate.files".localized(group.files.count)
@@ -362,13 +398,13 @@ typealias FileRow = OutlineMemberRow
 // MARK: - Default selection policy
 
 enum DeleteSelectionPolicy {
-    /// Seed marks after a scan. Purpose-risk / identity-mismatch groups start empty
-    /// (user opts in via “Apply keep suggestions”).
+    /// Seed marks after a scan. Locale / multi-product / package-shell purpose-risk
+    /// groups start empty (user opts in via “Apply keep suggestions”).
     static func defaultSelection(for groups: [DuplicateGroup]) -> Set<URL> {
         var set = Set<URL>()
         for group in groups {
             if group.packageIdentityMismatch {
-                // User must opt-in — same shell / different names / purpose risk
+                // User must opt-in — purpose risk
                 continue
             }
             for (index, file) in group.files.enumerated() where index > 0 {
@@ -413,5 +449,44 @@ enum DeleteSelectionPolicy {
     static func prune(_ selection: inout Set<URL>, groups: [DuplicateGroup]) {
         let live = Set(groups.flatMap { $0.files.map(\.url) })
         selection = selection.intersection(live)
+    }
+    
+    /// After precise compare rebuilds groups (new order / splits), remap marks by URL
+    /// so the user does not see an empty selection. Suggested-keep (index 0) stays unmarked.
+    static func reconcile(previous: Set<URL>, groups: [DuplicateGroup]) -> Set<URL> {
+        var result = Set<URL>()
+        for group in groups {
+            if group.packageIdentityMismatch {
+                for file in group.files where previous.contains(file.url) {
+                    result.insert(file.url)
+                }
+                unmarkSuggestedKeep(&result, in: group)
+                continue
+            }
+            
+            let preserved = group.files.filter { previous.contains($0.url) }.map(\.url)
+            if preserved.isEmpty {
+                for (index, file) in group.files.enumerated() where index > 0 {
+                    result.insert(file.url)
+                }
+            } else {
+                for url in preserved {
+                    result.insert(url)
+                }
+                unmarkSuggestedKeep(&result, in: group)
+                let stillMarked = group.files.contains { result.contains($0.url) }
+                if !stillMarked {
+                    for (index, file) in group.files.enumerated() where index > 0 {
+                        result.insert(file.url)
+                    }
+                }
+            }
+        }
+        return result
+    }
+    
+    private static func unmarkSuggestedKeep(_ selection: inout Set<URL>, in group: DuplicateGroup) {
+        guard let keep = group.files.first, selection.contains(keep.url) else { return }
+        selection.remove(keep.url)
     }
 }

@@ -16,6 +16,37 @@ struct ScanResultSnapshot: Codable, Sendable {
         var hash: String
         var fileSize: Int64
         var paths: [String]
+        /// Absent in older snapshots — materialize falls back safely.
+        var needsReview: Bool?
+        var isVerified: Bool?
+        var packageIdentityMismatch: Bool?
+        
+        init(
+            hash: String,
+            fileSize: Int64,
+            paths: [String],
+            needsReview: Bool? = nil,
+            isVerified: Bool? = nil,
+            packageIdentityMismatch: Bool? = nil
+        ) {
+            self.hash = hash
+            self.fileSize = fileSize
+            self.paths = paths
+            self.needsReview = needsReview
+            self.isVerified = isVerified
+            self.packageIdentityMismatch = packageIdentityMismatch
+        }
+        
+        static func from(_ group: DuplicateGroup) -> StoredDuplicateGroup {
+            StoredDuplicateGroup(
+                hash: group.hash,
+                fileSize: group.fileSize,
+                paths: group.files.map(\.pathKey),
+                needsReview: group.needsReview,
+                isVerified: group.isVerified,
+                packageIdentityMismatch: group.packageIdentityMismatch
+            )
+        }
     }
     
     enum CodingKeys: String, CodingKey {
@@ -114,13 +145,7 @@ struct ScanResultSnapshot: Codable, Sendable {
             listSignature: listSignature(for: files),
             fileCount: files.count,
             totalSize: files.reduce(0) { $0 + $1.size },
-            groups: groups.map { g in
-                StoredDuplicateGroup(
-                    hash: g.hash,
-                    fileSize: g.fileSize,
-                    paths: g.files.map(\.pathKey)
-                )
-            },
+            groups: groups.map(StoredDuplicateGroup.from),
             savedAt: Date(),
             scanMode: mode.rawValue
         )
@@ -147,22 +172,38 @@ struct ScanResultSnapshot: Codable, Sendable {
         for g in groups {
             var members: [FileInfo] = []
             members.reserveCapacity(g.paths.count)
+            var missing = false
             for p in g.paths {
                 let key = p.standardizedPath
-                guard let f = byPath[key] ?? byPath[p] else { return nil }
+                guard let f = byPath[key] ?? byPath[p] else {
+                    missing = true
+                    break
+                }
                 members.append(f)
             }
-            guard members.count >= 2 else { return nil }
-            let mismatch = PackageIdentity.hasIdentityMismatch(packages: members)
+            // Skip stale groups instead of failing the whole snapshot (one missing path
+            // used to force a full rescan and wipe Confirmed flags).
+            guard !missing, members.count >= 2 else { continue }
+            let liveMismatch = PackageIdentity.hasIdentityMismatch(packages: members)
+            let mismatch = g.packageIdentityMismatch ?? liveMismatch
+            // Prefer flags written after Precise compare; legacy snapshots lack them.
+            let verified = g.isVerified ?? false
+            let review: Bool
+            if let stored = g.needsReview {
+                review = stored
+            } else {
+                review = mismatch
+            }
             result.append(DuplicateGroup(
                 files: members,
                 fileSize: g.fileSize,
                 hash: g.hash,
-                needsReview: mismatch,
-                isVerified: false,
+                needsReview: mismatch ? true : review,
+                isVerified: mismatch ? false : verified,
                 packageIdentityMismatch: mismatch
             ))
         }
+        guard !result.isEmpty || groups.isEmpty else { return nil }
         return result.sorted { $0.duplicateSize > $1.duplicateSize }
     }
 }
@@ -173,6 +214,8 @@ enum ScanSnapshotStore {
     private static let fileName = "last_scan_snapshot_v2.plist"
     private static let hotLock = NSLock()
     private static var hotSnapshot: ScanResultSnapshot?
+    /// Bumped on save/clear so async disk writes cannot resurrect a cleared/stale snapshot.
+    private static var writeGeneration: UInt64 = 0
     
     /// Prefer Application Support (not purged like Caches).
     private static var fileURLs: [URL] {
@@ -214,18 +257,28 @@ enum ScanSnapshotStore {
     static func save(_ snapshot: ScanResultSnapshot, syncDisk: Bool = true) {
         hotLock.lock()
         hotSnapshot = snapshot
+        writeGeneration &+= 1
+        let gen = writeGeneration
         hotLock.unlock()
         if syncDisk {
-            writeToDisk(snapshot)
+            writeToDisk(snapshot, generation: gen)
         } else {
             Task.detached(priority: .utility) {
-                writeToDisk(snapshot)
+                writeToDisk(snapshot, generation: gen)
             }
         }
     }
     
-    private static func writeToDisk(_ snapshot: ScanResultSnapshot) {
+    private static func writeToDisk(_ snapshot: ScanResultSnapshot, generation: UInt64) {
+        hotLock.lock()
+        let stillCurrent = generation == writeGeneration
+        hotLock.unlock()
+        guard stillCurrent else { return }
         guard let data = try? PropertyListEncoder().encode(snapshot) else { return }
+        hotLock.lock()
+        let stillCurrentAfterEncode = generation == writeGeneration
+        hotLock.unlock()
+        guard stillCurrentAfterEncode else { return }
         for url in fileURLs {
             let tmp = url.appendingPathExtension("tmp")
             do {
@@ -251,9 +304,44 @@ enum ScanSnapshotStore {
     static func clear() {
         hotLock.lock()
         hotSnapshot = nil
+        writeGeneration &+= 1
         hotLock.unlock()
         for url in fileURLs {
             try? FileManager.default.removeItem(at: url)
+        }
+    }
+    
+    /// After Precise compare: keep list signature / roots, replace group rows
+    /// (hashes, membership, verified flags) so the next identical scan stays confirmed.
+    static func refreshGroups(from groups: [DuplicateGroup], syncDisk: Bool = true) {
+        guard var snap = load() else { return }
+        snap.groups = groups.map(ScanResultSnapshot.StoredDuplicateGroup.from)
+        snap.savedAt = Date()
+        save(snap, syncDisk: syncDisk)
+    }
+    
+    /// When a full rescan rebuilds turbo groups, copy Confirmed from the previous
+    /// snapshot onto groups with the same member path set.
+    static func overlayVerified(from previous: ScanResultSnapshot?, onto groups: [DuplicateGroup]) -> [DuplicateGroup] {
+        guard let previous else { return groups }
+        var byPaths: [Set<String>: ScanResultSnapshot.StoredDuplicateGroup] = [:]
+        for g in previous.groups where g.isVerified == true {
+            byPaths[Set(g.paths.map { $0.standardizedPath })] = g
+        }
+        guard !byPaths.isEmpty else { return groups }
+        return groups.map { group in
+            if group.isVerified || group.packageIdentityMismatch { return group }
+            let key = Set(group.files.map(\.pathKey))
+            guard let stored = byPaths[key] else { return group }
+            return DuplicateGroup(
+                files: group.files,
+                fileSize: group.fileSize,
+                hash: stored.hash,
+                needsReview: false,
+                isVerified: true,
+                packageIdentityMismatch: false,
+                id: group.id
+            )
         }
     }
 }

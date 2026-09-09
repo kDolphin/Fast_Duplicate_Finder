@@ -138,31 +138,6 @@ enum DuplicateGroupEditing: Sendable {
     }
 }
 
-/// Zero-cost heuristics: when turbo sampling might mis-group same-size files.
-enum DuplicateReviewPolicy {
-    /// Always suggest review for files this large (sampling finals)
-    static let largeFileBytes: Int64 = 16 * 1024 * 1024
-    /// Medium files only if the size-bucket was crowded
-    static let mediumFileBytes: Int64 = 2 * 1024 * 1024
-    static let crowdedBucketCount = 30
-    static let manyMembersInGroup = 8
-    
-    static func needsReview(
-        fileSize: Int64,
-        sameSizeCandidateCount: Int,
-        memberCount: Int
-    ) -> Bool {
-        if fileSize >= largeFileBytes { return true }
-        if fileSize >= mediumFileBytes && sameSizeCandidateCount >= crowdedBucketCount {
-            return true
-        }
-        if memberCount >= manyMembersInGroup && fileSize >= mediumFileBytes {
-            return true
-        }
-        return false
-    }
-}
-
 /// Same content, different *purpose* (name, path locale, multi-product same role).
 enum PackageIdentity {
     /// Why a content-matched group is unsafe to auto-clean.
@@ -174,7 +149,7 @@ enum PackageIdentity {
         case localeVariants
         /// Same relative role under different product roots (e.g. CodeResources in each .ccl)
         case multiProductRole
-        /// Other intentional different basenames (not copy / 副本 suffixes)
+        /// Reserved / legacy badge path (no longer assigned for regular files)
         case differentNames
     }
     
@@ -244,10 +219,10 @@ enum PackageIdentity {
             return .packageShell
         }
         
-        // 5) Different basenames that are not copy / 副本 variants
-        if !sameName, !basenamesAreRelated(names) {
-            return .differentNames
-        }
+        // Intentionally no catch-all for “different filenames” on regular files.
+        // Downloads-style duplicates often share content under unrelated names; those
+        // should get default keep/delete marks. Purpose risk stays locale / multi-
+        // product / package-shell only.
         
         return .none
     }

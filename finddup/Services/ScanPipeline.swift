@@ -93,7 +93,8 @@ actor ScanPipeline {
         if let snap = ScanSnapshotStore.load(),
            snap.matches(roots: rootKeys, signature: signature, mode: mode),
            let reused = snap.materialize(using: unique) {
-            let sizeCounts = Dictionary(grouping: unique, by: \.size).mapValues(\.count)
+            // Keep Precise-compare verified flags from the snapshot; only refresh
+            // purpose-risk / soft-package when the group was never confirmed.
             let flagged = reused.map { g -> DuplicateGroup in
                 let identityMismatch = PackageIdentity.hasIdentityMismatch(packages: g.files)
                 if identityMismatch {
@@ -107,17 +108,26 @@ actor ScanPipeline {
                         id: g.id
                     )
                 }
-                let review = DuplicateReviewPolicy.needsReview(
-                    fileSize: g.fileSize,
-                    sameSizeCandidateCount: sizeCounts[g.fileSize] ?? g.files.count,
-                    memberCount: g.files.count
-                )
+                if g.isVerified {
+                    return DuplicateGroup(
+                        files: g.files,
+                        fileSize: g.fileSize,
+                        hash: g.hash,
+                        needsReview: false,
+                        isVerified: true,
+                        packageIdentityMismatch: false,
+                        id: g.id
+                    )
+                }
+                let allPackages = g.files.allSatisfy(\.isPackage)
+                let packageVerified = allPackages && g.hash.hasPrefix("pkgv:")
+                let softPackage = allPackages && !packageVerified
                 return DuplicateGroup(
                     files: g.files,
                     fileSize: g.fileSize,
                     hash: g.hash,
-                    needsReview: review,
-                    isVerified: false,
+                    needsReview: softPackage || g.needsReview,
+                    isVerified: packageVerified,
                     packageIdentityMismatch: false,
                     id: g.id
                 )
@@ -379,9 +389,6 @@ actor ScanPipeline {
             stats: stats
         ))
         
-        // same-size candidate counts for review heuristics
-        let sizeBucketCounts = Dictionary(uniqueKeysWithValues: multiSize.map { ($0.key, $0.value.count) })
-        
         // Local packages only: silent content sentinels for tree-hash collisions.
         // On NAS, re-walking packages is multi-minute SMB latency at ~0% CPU — skip and soft-review.
         if !networkScan {
@@ -418,11 +425,8 @@ actor ScanPipeline {
                 review = true
                 verified = false
             } else {
-                review = DuplicateReviewPolicy.needsReview(
-                    fileSize: size,
-                    sameSizeCandidateCount: sizeBucketCounts[size] ?? uniq.count,
-                    memberCount: uniq.count
-                )
+                // Turbo multi-point match is trusted — no size/crowd “needs review”.
+                review = false
                 verified = false
             }
             groups.append(DuplicateGroup(
@@ -449,7 +453,9 @@ actor ScanPipeline {
                 await Task.yield()
             }
         }
+        let previousSnap = ScanSnapshotStore.load()
         groups = PreciseReview.apply(groups, cache: cache)
+        groups = ScanSnapshotStore.overlayVerified(from: previousSnap, onto: groups)
         groups.sort { $0.duplicateSize > $1.duplicateSize }
         
         if stats.newFiles == 0 && stats.cachedFiles > 0 {

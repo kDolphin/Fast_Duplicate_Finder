@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 
 struct GitHubReleaseInfo: Sendable, Equatable {

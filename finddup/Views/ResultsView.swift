@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 // MARK: - Filter
@@ -31,6 +32,7 @@ struct ResultsView: View {
     let onVerifyAllReview: () -> Void
     var onCancelVerify: (() -> Void)? = nil
     let isVerifying: Bool
+    var verifyingGroupIDs: Set<UUID> = []
     let verifyProgressText: String
     let totalScanDuration: TimeInterval
     let totalFilesScanned: Int
@@ -53,6 +55,13 @@ struct ResultsView: View {
         duplicateGroups.reduce(0) { $0 + (($1.needsReview && !$1.isVerified) ? 1 : 0) }
     }
     
+    /// Groups the bulk Precise-compare action will actually hash (excludes purpose-risk).
+    private var preciseComparableCount: Int {
+        duplicateGroups.reduce(0) {
+            $0 + (($1.needsReview && !$1.isVerified && !$1.packageIdentityMismatch) ? 1 : 0)
+        }
+    }
+    
     /// O(1) for bulk expand-all; no scanning tens of thousands of IDs.
     private var allFilteredExpanded: Bool {
         expandState.isFullyExpanded
@@ -70,6 +79,7 @@ struct ResultsView: View {
                     filter: $filter,
                     searchText: $searchField,
                     reviewCount: reviewCount,
+                    preciseComparableCount: preciseComparableCount,
                     purposeRiskPendingCount: purposeRiskPending(in: groups),
                     isVerifying: isVerifying,
                     allExpanded: allFilteredExpanded,
@@ -104,16 +114,8 @@ struct ResultsView: View {
                         newlyHashed: newlyHashed
                     )
                 }
-                
-                if isVerifying, !verifyProgressText.isEmpty {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(verifyProgressText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                }
+                // No top “precise compare” progress strip — row button shows Comparing…
+                // and a strip here jumps the metrics layout up/down.
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -135,6 +137,7 @@ struct ResultsView: View {
                                 group: group,
                                 isExpanded: expandState.isExpanded(group.id),
                                 isVerifying: isVerifying,
+                                isVerifyingThisGroup: verifyingGroupIDs.contains(group.id),
                                 selectedForDelete: $selectedForDelete,
                                 onToggle: { toggleGroup(group.id) },
                                 onDeleteFile: onDeleteFile,
@@ -156,6 +159,15 @@ struct ResultsView: View {
         .focusable(false)
         .onChange(of: searchField) { newValue in
             scheduleSearchApply(newValue)
+        }
+        // Compare jumps to Needs review so progress is visible. When verify ends, many
+        // groups become Confirmed and drop out of that filter — metrics then look like
+        // “0 selected / 0 freeable” even though marks remain. Always return to All.
+        // (Do not wait for reviewCount == 0: purpose-risk packages stay Needs review.)
+        .onChange(of: isVerifying) { verifying in
+            if !verifying && filter == .review {
+                filter = .all
+            }
         }
         .onDisappear {
             searchDebounce?.cancel()
@@ -344,6 +356,8 @@ struct ResultsChromeBar: View {
     @Binding var filter: ResultsListFilter
     @Binding var searchText: String
     let reviewCount: Int
+    /// Bulk Precise-compare target count (excludes purpose-risk). 0 hides the button.
+    var preciseComparableCount: Int = 0
     /// Purpose-risk groups still unselected (for bulk “apply keep suggestions”).
     var purposeRiskPendingCount: Int = 0
     let isVerifying: Bool
@@ -430,7 +444,7 @@ struct ResultsChromeBar: View {
                 .help(allExpanded ? "results.collapse.all".localized : "results.expand.all".localized)
                 .disabled(isVerifying)
                 
-                if reviewCount > 0 || isVerifying {
+                if preciseComparableCount > 0 || isVerifying {
                     Button(action: {
                         if isVerifying {
                             onCancelVerify?()
@@ -448,11 +462,11 @@ struct ResultsChromeBar: View {
                                     .font(.system(size: 11, weight: .semibold))
                             }
                             if compact {
-                                Text(isVerifying ? "review.verify.stop.short".localized : "review.verify.all.short".localized(reviewCount))
+                                Text(isVerifying ? "review.verify.stop.short".localized : "review.verify.all.short".localized(preciseComparableCount))
                                     .font(.caption.weight(.semibold))
                                     .lineLimit(1)
                             } else {
-                                Text(isVerifying ? "review.verify.stop".localized : "review.verify.all.count".localized(reviewCount))
+                                Text(isVerifying ? "review.verify.stop".localized : "review.verify.all.count".localized(preciseComparableCount))
                                     .font(.caption.weight(.semibold))
                                     .lineLimit(1)
                             }

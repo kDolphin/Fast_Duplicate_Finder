@@ -5,7 +5,7 @@
 A native **macOS** app that finds and removes **duplicate files** on local disks and network volumes (NAS) — fast by default, with safety checks before cleanup.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.8-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-1.0.9-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-macOS%2013%2B-blue" alt="platform" />
   <img src="https://img.shields.io/badge/architecture-Apple%20Silicon-green" alt="arch" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license" />
@@ -13,9 +13,10 @@ A native **macOS** app that finds and removes **duplicate files** on local disks
 
 ## Features
 
-- **Turbo scan** — Size buckets + xxHash sampling; optional **Precise compare** (full-file) for groups marked **Needs review**
+- **Turbo scan** — Size buckets + multi-point xxHash; trusted for default keep/delete marks
+- **Precise compare** — Optional per-group full-file check; becomes a green **Compared** badge when done
 - **Packages as wholes** — `.app`, disc packages, etc. stay opaque; compared as single items (structure + light content checks)
-- **Purpose-risk safety** — Same content but different *role* (locale paths, multi-product `CodeResources`, wrapper shells) is flagged and **not** pre-checked for delete
+- **Purpose-risk safety** — Locale / multi-product / package-shell roles are flagged and **not** pre-checked for delete (different filenames alone are fine)
 - **User-controlled cleanup** — Checkbox selection per item; Clean Up uses your marks; Trash by default
 - **Network / NAS aware** — Lower concurrency, path-ordered hashing, sequential-friendly network path
 - **Scan cache** — Reuse hashes across runs; package fingerprints skip interior walks when mtime is unchanged
@@ -68,12 +69,20 @@ open finddup.xcodeproj
 1. Add one or more folders in the sidebar.  
 2. Click **Start Scan**.  
 3. Review groups: expand, mark items to delete (or leave purpose-risk groups unchecked).  
-4. Use **Compare needs review** when you want full-file confirmation.  
+4. Optionally run **Precise compare** on a group you are unsure about.  
 5. **Clean Up** → preview → Trash / permanent per Settings.  
 
 Settings: **⌘,** or the gear icon.
 
 ## Changelog
+
+### 1.0.9
+
+- **Default marks** — Turbo multi-point matches are trusted; large-file / crowded-bucket “Needs review” heuristics removed so most groups are pre-checked after scan
+- **Purpose risk** — Only locale, multi-product role, and package-shell cases block auto-check (not “different filenames” alone)
+- **Group titles** — Related/same basenames show a representative name; unrelated names use the count label
+- **Precise compare UX** — Per-group action (blue) → green **Compared** badge; spinner only on the active group; no layout-jumping top progress strip; purpose-risk groups can compare too
+- **Rescan persistence** — After compare, the scan snapshot stores verified/precise groups so the next identical scan keeps **Compared**
 
 ### 1.0.8
 
